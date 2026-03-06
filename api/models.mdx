@@ -1,0 +1,208 @@
+---
+title: "Models API"
+description: "Discover available LLM models and their capabilities"
+---
+
+## GET /api/v1/models
+
+List all available models with capabilities and pricing information.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Query Parameters
+
+<ParamField query="capability" type="string">
+  Filter by capability: `text`, `vision`, `image`
+</ParamField>
+
+<ParamField query="provider" type="string">
+  Filter by provider: `google`, `openrouter`
+</ParamField>
+
+### Response
+
+<ResponseField name="models" type="array">
+  Array of model information objects
+  
+  <Expandable title="Model fields">
+    <ResponseField name="id" type="string">
+      Model identifier (e.g., `"gemini-2.5-flash"`)
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Human-readable model name
+    </ResponseField>
+    
+    <ResponseField name="provider" type="string">
+      Provider name (`"google"` or `"openrouter"`)
+    </ResponseField>
+    
+    <ResponseField name="capabilities" type="array">
+      Array of capabilities: `["text"]`, `["text", "vision"]`, `["image"]`
+    </ResponseField>
+    
+    <ResponseField name="context_length" type="number">
+      Maximum context length in tokens
+    </ResponseField>
+    
+    <ResponseField name="pricing" type="object">
+      Pricing information (input/output costs)
+    </ResponseField>
+    
+    <ResponseField name="is_available" type="boolean">
+      Whether the model is currently available
+    </ResponseField>
+    
+    <ResponseField name="is_free" type="boolean">
+      Whether the model is free (OpenRouter free tier)
+    </ResponseField>
+    
+    <ResponseField name="modality" type="string">
+      Input/output modality (e.g., `"text->text"`, `"text+image->text"`)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of models
+</ResponseField>
+
+<ResponseField name="cached" type="boolean">
+  Whether results are from cache
+</ResponseField>
+
+### Example
+
+```bash
+# List all models
+curl http://localhost:8000/api/v1/models
+
+# Filter by capability
+curl http://localhost:8000/api/v1/models?capability=text
+
+# Filter by provider
+curl http://localhost:8000/api/v1/models?provider=google
+```
+
+<Note>
+Model list is cached for 15 minutes to reduce API calls to providers.
+</Note>
+
+---
+
+## GET /api/v1/models/free
+
+List free models available on OpenRouter's free tier.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Response
+
+<ResponseField name="models" type="array">
+  Array of free model IDs with `:free` suffix (e.g., `"google/gemini-2.0-flash-001:free"`)
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Number of free models
+</ResponseField>
+
+<ResponseField name="note" type="string">
+  Usage notes about free tier limits
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/models/free
+```
+
+<Tip>
+Use free models for prototyping and testing. Apply the model ID directly in generation requests:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "moon landing 1969",
+    "text_model": "google/gemini-2.0-flash-001:free"
+  }'
+```
+</Tip>
+
+---
+
+## GET /api/v1/models/providers
+
+Get status and configuration of all providers.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Response
+
+<ResponseField name="providers" type="array">
+  Array of provider status objects
+  
+  <Expandable title="Provider fields">
+    <ResponseField name="provider" type="string">
+      Provider name
+    </ResponseField>
+    
+    <ResponseField name="available" type="boolean">
+      Whether provider is configured and available
+    </ResponseField>
+    
+    <ResponseField name="models_count" type="number">
+      Number of models from this provider
+    </ResponseField>
+    
+    <ResponseField name="default_text_model" type="string">
+      Default text model for this provider
+    </ResponseField>
+    
+    <ResponseField name="default_image_model" type="string">
+      Default image model for this provider
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/models/providers
+```
+
+---
+
+## GET /api/v1/models/{model_id}
+
+Get detailed information about a specific model.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Path Parameters
+
+<ParamField path="model_id" type="string" required>
+  Model identifier (URL-encoded, e.g., `google%2Fgemini-2.0-flash-001`)
+</ParamField>
+
+### Response
+
+Returns a single `ModelInfo` object with full details.
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/models/google%2Fgemini-2.0-flash-001
+```
+
+<Note>
+Use URL encoding for model IDs containing slashes (e.g., `google/gemini-2.0-flash-001` becomes `google%2Fgemini-2.0-flash-001`).
+</Note>

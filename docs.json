@@ -8,10 +8,6 @@
     "dark": "#6D28D9"
   },
   "favicon": "/favicon.svg",
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
   "navbar": {
     "primary": {
       "type": "github",
@@ -85,7 +81,9 @@
               "api/temporal",
               "api/auth",
               "api/credits",
-              "api/users"
+              "api/users",
+              "api/models",
+              "api/eval"
             ]
           },
           {

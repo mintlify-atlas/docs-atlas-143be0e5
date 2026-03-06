@@ -309,3 +309,193 @@ curl -X DELETE http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-4
 <Note>
 **Soft delete** (default): Sets `is_deleted=true` and moves blob to `.trash`. **Hard delete**: Permanently removes from database.
 </Note>
+---
+
+## GET /api/v1/timepoints/{id}/characters
+
+Get all character bios with pre-generated system prompts for roleplay.
+
+### Authentication
+
+Optional. Private timepoints require owner access.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Response
+
+<ResponseField name="timepoint_id" type="string">
+  Timepoint UUID
+</ResponseField>
+
+<ResponseField name="query" type="string">
+  Original query
+</ResponseField>
+
+<ResponseField name="year" type="number">
+  Year of the scene
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Location description
+</ResponseField>
+
+<ResponseField name="total_characters" type="number">
+  Total number of characters
+</ResponseField>
+
+<ResponseField name="speaking_characters" type="number">
+  Number of characters with dialog
+</ResponseField>
+
+<ResponseField name="characters" type="array">
+  Array of character objects with full roleplay system prompts
+  
+  <Expandable title="Character fields">
+    <ResponseField name="name" type="string">
+      Character name
+    </ResponseField>
+    
+    <ResponseField name="role" type="string">
+      Character's role (primary/secondary/background)
+    </ResponseField>
+    
+    <ResponseField name="bio" type="string">
+      Character biography
+    </ResponseField>
+    
+    <ResponseField name="social_register" type="string">
+      Speech pattern category (elite/educated/common/servant/child)
+    </ResponseField>
+    
+    <ResponseField name="system_prompt" type="string">
+      Complete LLM system prompt to make the model "become" this character
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000/characters
+```
+
+<Tip>
+Use the `system_prompt` field directly with your LLM to generate authentic character dialog. Each prompt includes historical context, personality traits, and voice patterns.
+</Tip>
+
+---
+
+## POST /api/v1/timepoints/{id}/export
+
+Write or rewrite a blob folder for an existing timepoint. Creates a self-contained directory with decoded image, JSON sidecars, manifest, and browsable index.html.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Response
+
+Returns a `TimepointResponse` with updated `blob_path` field pointing to the exported directory.
+
+<ResponseField name="blob_path" type="string">
+  Path to the exported blob folder
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000/export
+```
+
+### Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 200 | Success |
+| 400 | Timepoint incomplete |
+| 404 | Timepoint not found |
+| 500 | Blob write failed |
+
+<Note>
+Requires `BLOB_STORAGE_ENABLED=true` in environment configuration. The exported folder includes:
+- `image.jpg` - Decoded image
+- `timepoint.json` - Full timepoint data
+- `manifest.json` - File inventory
+- `index.html` - Browsable preview
+</Note>
+
+---
+
+## GET /api/v1/timepoints/{timepoint_id}/tdf
+
+Export a timepoint as a TDF (Timepoint Data Format) record — the JSON interchange format used across the Timepoint suite (Flash, Pro, Clockchain, SNAG-Bench, Proteus).
+
+### Authentication
+
+Optional. No authentication required.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Flash UUID
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  TDF schema version (currently "1.0.0")
+</ResponseField>
+
+<ResponseField name="source" type="string">
+  Originating service ("flash")
+</ResponseField>
+
+<ResponseField name="timestamp" type="string">
+  ISO-8601 creation time
+</ResponseField>
+
+<ResponseField name="provenance" type="object">
+  Generator metadata
+  
+  <Expandable title="Provenance fields">
+    <ResponseField name="generator" type="string">
+      Generator name ("timepoint-flash")
+    </ResponseField>
+    
+    <ResponseField name="flash_id" type="string">
+      Original Flash UUID
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="payload" type="object">
+  Temporal-spatial-narrative content (full timepoint data)
+</ResponseField>
+
+<ResponseField name="tdf_hash" type="string">
+  SHA-256 hash of the canonicalized payload (content-addressed)
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000/tdf
+```
+
+<Info>
+The TDF format enables interoperability across the Timepoint ecosystem. The `tdf_hash` makes each record content-addressable for deduplication and verification.
+</Info>

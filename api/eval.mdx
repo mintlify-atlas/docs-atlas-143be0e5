@@ -1,0 +1,231 @@
+---
+title: "Evaluation API"
+description: "Compare model performance and latencies"
+---
+
+## POST /api/v1/eval/compare
+
+Run multi-model comparison by executing the same query across multiple models in parallel.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Request Body
+
+<ParamField body="query" type="string" required>
+  Query to evaluate across models
+</ParamField>
+
+<ParamField body="preset" type="string">
+  Use a preset configuration: `"verified"`, `"fast"`, `"quality"`, `"all"`
+</ParamField>
+
+<ParamField body="models" type="array">
+  Specific model IDs to compare (overrides preset)
+</ParamField>
+
+<ParamField body="generate_image" type="boolean" default="false">
+  Whether to generate images
+</ParamField>
+
+### Response
+
+<ResponseField name="query" type="string">
+  The evaluated query
+</ResponseField>
+
+<ResponseField name="preset" type="string">
+  Preset used (if any)
+</ResponseField>
+
+<ResponseField name="results" type="array">
+  Array of evaluation results per model
+  
+  <Expandable title="Result fields">
+    <ResponseField name="model_id" type="string">
+      Model identifier
+    </ResponseField>
+    
+    <ResponseField name="success" type="boolean">
+      Whether generation succeeded
+    </ResponseField>
+    
+    <ResponseField name="total_time" type="number">
+      Total time in seconds
+    </ResponseField>
+    
+    <ResponseField name="timepoint_id" type="string">
+      Generated timepoint UUID (if successful)
+    </ResponseField>
+    
+    <ResponseField name="error" type="string">
+      Error message (if failed)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="statistics" type="object">
+  Aggregate statistics
+  
+  <Expandable title="Statistics fields">
+    <ResponseField name="total_models" type="number">
+      Number of models tested
+    </ResponseField>
+    
+    <ResponseField name="successful" type="number">
+      Number of successful generations
+    </ResponseField>
+    
+    <ResponseField name="failed" type="number">
+      Number of failed generations
+    </ResponseField>
+    
+    <ResponseField name="avg_time" type="number">
+      Average time across successful runs
+    </ResponseField>
+    
+    <ResponseField name="min_time" type="number">
+      Fastest successful run
+    </ResponseField>
+    
+    <ResponseField name="max_time" type="number">
+      Slowest successful run
+    </ResponseField>
+    
+    <ResponseField name="fastest_model" type="string">
+      ID of the fastest model
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+# Compare using preset
+curl -X POST http://localhost:8000/api/v1/eval/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "moon landing 1969",
+    "preset": "verified"
+  }'
+
+# Compare specific models
+curl -X POST http://localhost:8000/api/v1/eval/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "moon landing 1969",
+    "models": ["gemini-2.5-flash", "google/gemini-2.0-flash-001"]
+  }'
+```
+
+<Warning>
+Comparison runs generate multiple timepoints in parallel. Each generation consumes credits if auth is enabled.
+</Warning>
+
+---
+
+## POST /api/v1/eval/compare/report
+
+Run comparison and return both JSON data and formatted ASCII report.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Request Body
+
+Same as `/api/v1/eval/compare`.
+
+### Response
+
+<ResponseField name="comparison" type="object">
+  Full comparison data (same as `/compare` response)
+</ResponseField>
+
+<ResponseField name="report" type="string">
+  Formatted ASCII table report with model names, times, and success rates
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/eval/compare/report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Turing interrogation 1952",
+    "preset": "fast"
+  }'
+```
+
+**Example report output:**
+
+```
+Model Comparison Report
+Query: Turing interrogation 1952
+
+Model                              Time    Status
+─────────────────────────────────────────────────
+gemini-2.5-flash                   45.2s   ✓
+google/gemini-2.0-flash-001        38.9s   ✓
+google/gemini-3-flash-preview      52.1s   ✓
+
+Statistics:
+  Total:      3 models
+  Successful: 3
+  Failed:     0
+  Avg time:   45.4s
+  Fastest:    google/gemini-2.0-flash-001 (38.9s)
+```
+
+<Tip>
+Use the report format for quick CLI-based model selection and benchmarking.
+</Tip>
+
+---
+
+## GET /api/v1/eval/models
+
+List all available models and presets for evaluation.
+
+### Authentication
+
+Optional. No authentication required.
+
+### Response
+
+<ResponseField name="presets" type="object">
+  Available preset configurations
+  
+  <Expandable title="Preset structure">
+    <ResponseField name="verified" type="array">
+      Verified production models
+    </ResponseField>
+    
+    <ResponseField name="fast" type="array">
+      Fast models for quick testing
+    </ResponseField>
+    
+    <ResponseField name="quality" type="array">
+      High-quality models
+    </ResponseField>
+    
+    <ResponseField name="all" type="array">
+      All available models
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="models" type="array">
+  Array of all available model IDs
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/eval/models
+```
+
+<Info>
+Use this endpoint to discover which models are available for comparison before running evaluations.
+</Info>
