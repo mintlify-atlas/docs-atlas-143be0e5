@@ -1,0 +1,136 @@
+{
+  "projectType": "api-service",
+  "projectName": "TIMEPOINT Flash",
+  "projectDescription": "AI-powered API service that generates historically accurate scenes from natural language queries using 15 specialized agents, Google Search verification, and photorealistic image rendering.",
+  "theme": "aspen",
+  "primaryColor": "#8B5CF6",
+  "lightColor": "#A78BFA",
+  "darkColor": "#6D28D9",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "deployment"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/agents",
+              "concepts/pipeline",
+              "concepts/grounding",
+              "concepts/quality-presets"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/scene-generation",
+              "features/character-interactions",
+              "features/temporal-navigation",
+              "features/image-generation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/authentication",
+              "configuration/credits"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/rate-limits"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/generation",
+              "api/timepoints",
+              "api/interactions",
+              "api/temporal",
+              "api/auth",
+              "api/credits",
+              "api/users"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "api/streaming",
+              "api/error-handling",
+              "api/ios-client"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "guides/testing",
+              "guides/adding-agents",
+              "guides/custom-models"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "guides/temporal-sequences",
+              "guides/billing-integration",
+              "guides/service-keys"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "14-agent pipeline with parallel execution for scene generation",
+    "Google Search grounding for historical accuracy verification",
+    "Character interactions with voice-differentiated dialog",
+    "Temporal navigation (forward/backward time travel)",
+    "3-tier image generation fallback (Google Imagen → OpenRouter Flux → Pollinations.ai)",
+    "Quality presets (hyper/balanced/hd/gemini3) for speed/quality tradeoff",
+    "JWT authentication with Apple Sign-In support",
+    "Credit-based billing system with customizable hooks",
+    "Streaming generation with SSE progress updates",
+    "Critique-retry loop for dialog quality assurance"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/timepoints/generate/stream - Generate scene with streaming progress",
+    "POST /api/v1/timepoints/generate/sync - Generate scene (blocking)",
+    "POST /api/v1/timepoints/generate - Generate scene (background)",
+    "GET /api/v1/timepoints/{id} - Retrieve a scene",
+    "PATCH /api/v1/timepoints/{id}/visibility - Set scene visibility",
+    "POST /api/v1/interactions/{id}/chat - Chat with character",
+    "POST /api/v1/temporal/{id}/next - Jump forward in time",
+    "POST /api/v1/temporal/{id}/prior - Jump backward in time",
+    "GET /api/v1/temporal/{id}/sequence - Get timeline sequence",
+    "POST /api/v1/auth/apple - Apple Sign-In authentication",
+    "POST /api/v1/auth/refresh - Refresh access token",
+    "GET /api/v1/auth/me - Get current user profile",
+    "GET /api/v1/credits/balance - Get credit balance",
+    "GET /api/v1/credits/costs - Get credit cost table",
+    "GET /api/v1/users/me/timepoints - List user's scenes",
+    "POST /api/v1/users/resolve - Resolve user by external_id"
+  ]
+}
