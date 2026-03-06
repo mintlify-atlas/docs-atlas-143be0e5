@@ -1,0 +1,431 @@
+---
+title: Adding Custom Agents
+description: Create your own specialized agents for the generation pipeline
+---
+
+TIMEPOINT Flash uses 14 specialized agents (see `app/agents/base.py:1`). You can add custom agents to extend the pipeline.
+
+## The Schema-Prompt-Agent Pattern
+
+All agents follow this pattern:
+
+1. **Schema** - Define structured output (`Pydantic` model)
+2. **Prompt** - Write system and user prompts
+3. **Agent** - Implement `BaseAgent` to call the LLM
+4. **Wire** - Add to pipeline
+5. **Test** - Write unit tests
+
+## Step-by-Step: Creating a Custom Agent
+
+<Steps>
+  <Step title="Define the output schema">
+    Create `app/schemas/weather_analysis.py`:
+
+    ```python app/schemas/weather_analysis.py
+    from pydantic import BaseModel, Field
+
+    class WeatherAnalysis(BaseModel):
+        """Weather conditions for a historical scene."""
+
+        temperature_f: int = Field(
+            description="Temperature in Fahrenheit"
+        )
+        conditions: str = Field(
+            description="Weather description",
+            examples=["Clear skies", "Overcast", "Light rain"]
+        )
+        visibility: str = Field(
+            description="Visibility conditions",
+            examples=["Excellent", "Good", "Poor"]
+        )
+        historical_note: str = Field(
+            description="Verified weather data if available"
+        )
+    ```
+
+    Export in `app/schemas/__init__.py`:
+
+    ```python
+    from app.schemas.weather_analysis import WeatherAnalysis
+
+    __all__ = [
+        # ... existing exports
+        "WeatherAnalysis",
+    ]
+    ```
+  </Step>
+
+  <Step title="Write the prompts">
+    Create `app/prompts/weather_analysis.py`:
+
+    ```python app/prompts/weather_analysis.py
+    """Prompts for weather analysis agent."""
+
+    SYSTEM_PROMPT = """You are a historical weather analyst.
+
+    Your task:
+    - Analyze weather conditions for a specific date/location
+    - Use historical weather records when available
+    - Make reasonable inferences for historical periods
+    - Consider season, geography, and climate patterns
+
+    Output a structured WeatherAnalysis.
+    """
+
+    USER_PROMPT_TEMPLATE = """Analyze weather conditions:
+
+    Location: {location}
+    Date: {year}-{month:02d}-{day:02d}
+    Season: {season}
+    Time of day: {time_of_day}
+
+    Provide weather analysis with historical accuracy.
+    """
+
+    def get_system_prompt() -> str:
+        return SYSTEM_PROMPT.strip()
+
+    def get_user_prompt(
+        location: str,
+        year: int,
+        month: int,
+        day: int,
+        season: str,
+        time_of_day: str,
+    ) -> str:
+        return USER_PROMPT_TEMPLATE.format(
+            location=location,
+            year=year,
+            month=month,
+            day=day,
+            season=season,
+            time_of_day=time_of_day,
+        ).strip()
+    ```
+  </Step>
+
+  <Step title="Implement the agent">
+    Create `app/agents/weather_analysis.py`:
+
+    ```python app/agents/weather_analysis.py
+    """Weather analysis agent.
+
+    Analyzes historical weather conditions for scenes.
+
+    Examples:
+        >>> agent = WeatherAnalysisAgent()
+        >>> input_data = WeatherInput(
+        ...     location="Gettysburg, PA",
+        ...     year=1863,
+        ...     month=7,
+        ...     day=3,
+        ...     season="summer",
+        ...     time_of_day="afternoon"
+        ... )
+        >>> result = await agent.run(input_data)
+        >>> print(result.content.temperature_f)  # 87
+
+    Tests:
+        - tests/unit/test_agents/test_weather.py
+    """
+
+    from __future__ import annotations
+
+    from dataclasses import dataclass
+
+    from app.agents.base import AgentResult, BaseAgent
+    from app.core.llm_router import LLMRouter
+    from app.prompts import weather_analysis as prompts
+    from app.schemas import WeatherAnalysis
+
+
+    @dataclass
+    class WeatherInput:
+        """Input for weather analysis agent."""
+        location: str
+        year: int
+        month: int
+        day: int
+        season: str
+        time_of_day: str
+
+
+    class WeatherAnalysisAgent(BaseAgent[WeatherInput, WeatherAnalysis]):
+        """Agent that analyzes weather for historical scenes.
+
+        Uses historical records and climate patterns to determine
+        accurate weather conditions.
+
+        Attributes:
+            response_model: WeatherAnalysis Pydantic model
+            name: "WeatherAnalysisAgent"
+        """
+
+        response_model = WeatherAnalysis
+
+        def __init__(self, router: LLMRouter | None = None) -> None:
+            """Initialize weather analysis agent.
+
+            Args:
+                router: LLM router (creates one if not provided)
+            """
+            super().__init__(router=router, name="WeatherAnalysisAgent")
+
+        def get_system_prompt(self) -> str:
+            """Get the system prompt for weather analysis.
+
+            Returns:
+                System prompt string
+            """
+            return prompts.get_system_prompt()
+
+        def get_prompt(self, input_data: WeatherInput) -> str:
+            """Get the user prompt for weather analysis.
+
+            Args:
+                input_data: Weather input data
+
+            Returns:
+                User prompt string
+            """
+            return prompts.get_user_prompt(
+                location=input_data.location,
+                year=input_data.year,
+                month=input_data.month,
+                day=input_data.day,
+                season=input_data.season,
+                time_of_day=input_data.time_of_day,
+            )
+
+        async def run(self, input_data: WeatherInput) -> AgentResult[WeatherAnalysis]:
+            """Execute weather analysis.
+
+            Args:
+                input_data: Weather input data
+
+            Returns:
+                AgentResult with WeatherAnalysis or error
+            """
+            return await self._call_llm(input_data)
+    ```
+
+    Export in `app/agents/__init__.py`:
+
+    ```python
+    from app.agents.weather_analysis import WeatherAnalysisAgent
+
+    __all__ = [
+        # ... existing exports
+        "WeatherAnalysisAgent",
+    ]
+    ```
+  </Step>
+
+  <Step title="Wire into the pipeline">
+    Modify `app/core/pipeline.py` to include your agent:
+
+    ```python app/core/pipeline.py
+    from app.agents import (
+        # ... existing agents
+        WeatherAnalysisAgent,
+    )
+    from app.agents.weather_analysis import WeatherInput
+
+    class ScenePipeline:
+        def __init__(self, router: LLMRouter | None = None):
+            self.router = router or LLMRouter()
+            # ... existing agents
+            self.weather_agent = WeatherAnalysisAgent(self.router)
+
+        async def generate(self, query: str) -> PipelineResult:
+            # ... existing pipeline steps
+
+            # Add weather analysis after scene generation
+            if scene_result.success:
+                weather_input = WeatherInput(
+                    location=scene_result.content.location,
+                    year=timeline_result.content.year,
+                    month=timeline_result.content.month,
+                    day=timeline_result.content.day,
+                    season=timeline_result.content.season,
+                    time_of_day=timeline_result.content.time_of_day,
+                )
+                weather_result = await self.weather_agent.run(weather_input)
+
+                # Store in timepoint metadata
+                if weather_result.success:
+                    timepoint.metadata_json["weather"] = weather_result.content.model_dump()
+    ```
+  </Step>
+
+  <Step title="Add tests">
+    Create `tests/unit/test_agents/test_weather.py`:
+
+    ```python tests/unit/test_agents/test_weather.py
+    import pytest
+    from unittest.mock import AsyncMock
+
+    from app.agents.weather_analysis import WeatherAnalysisAgent, WeatherInput
+    from app.agents.base import AgentResult
+    from app.schemas import WeatherAnalysis
+
+
+    @pytest.mark.fast
+    class TestWeatherAnalysisAgent:
+        """Tests for WeatherAnalysisAgent."""
+
+        def test_initialization(self):
+            """Test agent initialization."""
+            agent = WeatherAnalysisAgent()
+            assert agent.name == "WeatherAnalysisAgent"
+            assert agent.response_model == WeatherAnalysis
+
+        def test_get_system_prompt(self):
+            """Test system prompt."""
+            agent = WeatherAnalysisAgent()
+            prompt = agent.get_system_prompt()
+            assert "weather analyst" in prompt.lower()
+
+        def test_get_prompt(self):
+            """Test user prompt generation."""
+            agent = WeatherAnalysisAgent()
+            input_data = WeatherInput(
+                location="Gettysburg, PA",
+                year=1863,
+                month=7,
+                day=3,
+                season="summer",
+                time_of_day="afternoon",
+            )
+            prompt = agent.get_prompt(input_data)
+            assert "Gettysburg" in prompt
+            assert "1863" in prompt
+
+        @pytest.mark.asyncio
+        async def test_run_success(self):
+            """Test successful weather analysis."""
+            mock_router = AsyncMock()
+            mock_router.call_structured = AsyncMock(
+                return_value=AgentResult(
+                    success=True,
+                    content=WeatherAnalysis(
+                        temperature_f=87,
+                        conditions="Hot and humid",
+                        visibility="Good",
+                        historical_note="Battle occurred in summer heat",
+                    ),
+                    latency_ms=150,
+                    model_used="gemini-2.5-flash",
+                )
+            )
+
+            agent = WeatherAnalysisAgent(router=mock_router)
+            input_data = WeatherInput(
+                location="Gettysburg, PA",
+                year=1863,
+                month=7,
+                day=3,
+                season="summer",
+                time_of_day="afternoon",
+            )
+            result = await agent.run(input_data)
+
+            assert result.success
+            assert result.content.temperature_f == 87
+            assert "humid" in result.content.conditions.lower()
+    ```
+
+    Run tests:
+
+    ```bash
+    pytest tests/unit/test_agents/test_weather.py -v
+    ```
+  </Step>
+</Steps>
+
+## Agent Base Class Reference
+
+All agents inherit from `BaseAgent[InputT, OutputT]` (see `app/agents/base.py:66`):
+
+### Required Attributes
+
+```python
+class YourAgent(BaseAgent[YourInput, YourOutput]):
+    # Required: Pydantic model for structured output
+    response_model = YourOutput
+
+    # Optional: Model capability needed (default: TEXT)
+    capability = ModelCapability.TEXT
+```
+
+### Required Methods
+
+```python
+def get_system_prompt(self) -> str:
+    """Return system prompt defining the agent's role."""
+    pass
+
+def get_prompt(self, input_data: InputT) -> str:
+    """Return user prompt with input data."""
+    pass
+
+async def run(self, input_data: InputT) -> AgentResult[OutputT]:
+    """Execute the agent (usually calls self._call_llm)."""
+    return await self._call_llm(input_data)
+```
+
+### Helper Methods
+
+```python
+# Make a structured LLM call with automatic error handling
+await self._call_llm(input_data, temperature=0.7)
+
+# Make an unstructured LLM call (returns raw text)
+await self._call_raw("prompt text", max_tokens=1000)
+```
+
+## Real Agent Examples
+
+Study existing agents for reference:
+
+| Agent | File | Complexity | Key Features |
+|-------|------|------------|-------------|
+| Judge | `app/agents/judge.py:1` | Simple | Basic validation, enum classification |
+| Timeline | `app/agents/timeline.py` | Simple | Date extraction, structured output |
+| Scene | `app/agents/scene.py` | Medium | Rich descriptive output |
+| Characters | `app/agents/characters.py` | Complex | Sub-agents, parallel execution |
+| Dialog | `app/agents/dialog.py` | Complex | Narrative arcs, speaker selection |
+
+## Parallel Execution
+
+Agents can run in parallel (see `app/core/pipeline.py` for pattern):
+
+```python
+import asyncio
+
+# Run multiple agents concurrently
+results = await asyncio.gather(
+    self.weather_agent.run(weather_input),
+    self.mood_agent.run(mood_input),
+    self.sound_agent.run(sound_input),
+)
+
+weather_result, mood_result, sound_result = results
+```
+
+<Note>
+Parallel agents must have independent inputs. Don't run agents in parallel if one depends on the other's output.
+</Note>
+
+## Best Practices
+
+1. **Keep prompts focused** - One agent, one task
+2. **Use strong typing** - Pydantic models ensure valid outputs
+3. **Test thoroughly** - Mock the LLM router for fast unit tests
+4. **Handle errors gracefully** - `AgentResult` includes error messages
+5. **Document examples** - Show usage in docstrings
+6. **Follow the pattern** - All agents use the same structure
+
+<Tip>
+Use `temperature=0.3` for factual agents (dates, facts) and `temperature=0.7` for creative agents (dialog, descriptions).
+</Tip>

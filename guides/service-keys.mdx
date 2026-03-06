@@ -1,0 +1,427 @@
+---
+title: Service Keys
+description: Secure service-to-service authentication
+---
+
+Service keys enable secure service-to-service communication via the `X-Service-Key` header (see `app/main.py:112`).
+
+## When to Use Service Keys
+
+Use service keys when:
+
+- Flash is deployed as an internal API (no browser access)
+- You have multiple services calling Flash (microservices architecture)
+- You want to bypass per-user authentication
+- You need simple shared-secret authentication
+
+**Don't use service keys when:**
+- You have browser clients (use CORS instead)
+- You need per-user credit tracking (use JWT auth)
+- You want fine-grained permissions (use JWT claims)
+
+## How It Works
+
+When `FLASH_SERVICE_KEY` is set, Flash rejects all requests without a valid `X-Service-Key` header:
+
+```
+Client → X-Service-Key: secret → Flash
+                                   ↓
+                            ServiceKeyMiddleware
+                                   ↓
+                         Valid? → API Routes
+                         Invalid? → 403 Forbidden
+```
+
+Exempt endpoints (always accessible):
+- `/health`
+- `/`
+- `/docs`
+- `/redoc`
+- `/openapi.json`
+
+## Setup
+
+<Steps>
+  <Step title="Generate a service key">
+    Generate a secure random key:
+
+    ```bash
+    python -c "import secrets; print(secrets.token_urlsafe(32))"
+    ```
+
+    Output:
+    ```
+    xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+    ```
+  </Step>
+
+  <Step title="Set in environment">
+    Add to `.env`:
+
+    ```bash .env
+    FLASH_SERVICE_KEY=xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+    ```
+
+    When set, Flash enables `ServiceKeyMiddleware` (see `app/main.py:145`).
+  </Step>
+
+  <Step title="Configure clients">
+    All API clients must include the header:
+
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/generate \
+      -H "X-Service-Key: xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0" \
+      -H "Content-Type: application/json" \
+      -d '{"query": "signing of the declaration"}'
+    ```
+  </Step>
+</Steps>
+
+## Middleware Implementation
+
+The middleware is defined in `app/main.py:112`:
+
+```python
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+_OPEN_PATHS = {"/health", "/", "/docs", "/redoc", "/openapi.json"}
+
+
+class ServiceKeyMiddleware(BaseHTTPMiddleware):
+    """Reject requests without a valid X-Service-Key header.
+
+    When FLASH_SERVICE_KEY is empty, all requests are allowed (open access).
+    Health/docs endpoints are always exempt.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        service_key = get_settings().FLASH_SERVICE_KEY
+        if service_key and request.url.path not in _OPEN_PATHS:
+            provided = request.headers.get("X-Service-Key", "")
+            if provided != service_key:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Invalid or missing service key"},
+                )
+        return await call_next(request)
+```
+
+## Python Client Example
+
+```python client.py
+import httpx
+import os
+
+class FlashClient:
+    """TIMEPOINT Flash API client with service key auth."""
+
+    def __init__(self, base_url: str, service_key: str):
+        self.base_url = base_url
+        self.service_key = service_key
+        self.client = httpx.AsyncClient(
+            base_url=base_url,
+            headers={"X-Service-Key": service_key},
+        )
+
+    async def generate_scene(self, query: str, preset: str = "balanced"):
+        """Generate a historical scene."""
+        response = await self.client.post(
+            "/api/v1/generate",
+            json={"query": query, "preset": preset},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_timepoint(self, timepoint_id: str, full: bool = False):
+        """Fetch a timepoint by ID."""
+        response = await self.client.get(
+            f"/api/v1/timepoints/{timepoint_id}",
+            params={"full": full},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def close(self):
+        await self.client.aclose()
+
+
+# Usage
+async def main():
+    client = FlashClient(
+        base_url="http://localhost:8000",
+        service_key=os.getenv("FLASH_SERVICE_KEY"),
+    )
+
+    try:
+        # Generate a scene
+        result = await client.generate_scene(
+            query="signing of the declaration of independence"
+        )
+        print(f"Created timepoint: {result['id']}")
+
+        # Fetch full details
+        timepoint = await client.get_timepoint(result["id"], full=True)
+        print(f"Location: {timepoint['location']}")
+    finally:
+        await client.close()
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+## JavaScript/TypeScript Client
+
+```typescript client.ts
+interface GenerateRequest {
+  query: string;
+  preset?: string;
+}
+
+interface Timepoint {
+  id: string;
+  query: string;
+  status: string;
+  year?: number;
+  location?: string;
+}
+
+class FlashClient {
+  private baseUrl: string;
+  private serviceKey: string;
+
+  constructor(baseUrl: string, serviceKey: string) {
+    this.baseUrl = baseUrl;
+    this.serviceKey = serviceKey;
+  }
+
+  private get headers() {
+    return {
+      "X-Service-Key": this.serviceKey,
+      "Content-Type": "application/json",
+    };
+  }
+
+  async generateScene(request: GenerateRequest): Promise<Timepoint> {
+    const response = await fetch(`${this.baseUrl}/api/v1/generate`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async getTimepoint(id: string, full: boolean = false): Promise<Timepoint> {
+    const url = new URL(`${this.baseUrl}/api/v1/timepoints/${id}`);
+    url.searchParams.set("full", String(full));
+
+    const response = await fetch(url.toString(), {
+      headers: this.headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    return response.json();
+  }
+}
+
+// Usage
+const client = new FlashClient(
+  "http://localhost:8000",
+  process.env.FLASH_SERVICE_KEY!
+);
+
+const timepoint = await client.generateScene({
+  query: "signing of the declaration of independence",
+  preset: "balanced",
+});
+
+console.log(`Created: ${timepoint.id}`);
+```
+
+## Multiple Services
+
+Different services can share the same key:
+
+```bash
+# Service A (content generator)
+FLASH_SERVICE_KEY=xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+
+# Service B (analytics dashboard)
+FLASH_SERVICE_KEY=xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+
+# Service C (batch processor)
+FLASH_SERVICE_KEY=xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+```
+
+Or use separate keys with a routing layer:
+
+```python
+class MultiKeyMiddleware(BaseHTTPMiddleware):
+    """Support multiple service keys with different permissions."""
+
+    VALID_KEYS = {
+        "service_a_key": {"generate", "read"},
+        "service_b_key": {"read"},
+        "admin_key": {"generate", "read", "delete"},
+    }
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in _OPEN_PATHS:
+            return await call_next(request)
+
+        provided = request.headers.get("X-Service-Key", "")
+        permissions = self.VALID_KEYS.get(provided)
+
+        if not permissions:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Invalid service key"},
+            )
+
+        # Check permissions based on endpoint
+        # (implementation depends on your requirements)
+
+        return await call_next(request)
+```
+
+## CORS vs Service Keys
+
+Service keys and CORS solve different problems:
+
+### Use CORS (disable service keys)
+
+```bash .env
+CORS_ENABLED=true
+CORS_ORIGINS=https://your-app.com,https://staging.your-app.com
+FLASH_SERVICE_KEY=  # Empty = open access
+```
+
+For:
+- Browser clients
+- Public APIs
+- Per-user authentication (JWT)
+
+### Use Service Keys (disable CORS)
+
+```bash .env
+CORS_ENABLED=false  # No browser callers
+FLASH_SERVICE_KEY=your-secret-key
+```
+
+For:
+- Internal services
+- Microservices
+- Backend-to-backend communication
+
+### Use Both
+
+```bash .env
+CORS_ENABLED=true
+CORS_ORIGINS=https://your-app.com
+FLASH_SERVICE_KEY=your-secret-key
+```
+
+For:
+- Hybrid deployments
+- Browser clients + internal services
+- Different auth per client type
+
+<Note>
+When both are enabled:
+- Browser clients: CORS headers, no service key needed
+- Internal services: Service key required (CORS not checked)
+</Note>
+
+## Security Best Practices
+
+1. **Use strong keys** - 32+ characters, randomly generated
+2. **Rotate regularly** - Change keys every 90 days
+3. **Store securely** - Use secret management (AWS Secrets Manager, Vault)
+4. **Use HTTPS** - Always use TLS in production
+5. **Log access** - Monitor for unauthorized attempts
+6. **Limit scope** - Use different keys per service if possible
+
+## Deployment Examples
+
+### Docker Compose
+
+```yaml docker-compose.yml
+services:
+  flash:
+    image: timepoint-flash:latest
+    environment:
+      - FLASH_SERVICE_KEY=${FLASH_SERVICE_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "8000:8000"
+
+  content-service:
+    image: content-service:latest
+    environment:
+      - FLASH_URL=http://flash:8000
+      - FLASH_SERVICE_KEY=${FLASH_SERVICE_KEY}
+    depends_on:
+      - flash
+```
+
+### Kubernetes
+
+```yaml k8s/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flash-service-key
+type: Opaque
+stringData:
+  service-key: xQ7j9Kp2Lm5Nv8Rw3Zt6Yh1Fc4Bd7Gs0
+```
+
+```yaml k8s/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: timepoint-flash
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: flash
+        image: timepoint-flash:latest
+        env:
+        - name: FLASH_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: flash-service-key
+              key: service-key
+```
+
+## Disabling Service Keys
+
+Leave `FLASH_SERVICE_KEY` empty for open access:
+
+```bash .env
+FLASH_SERVICE_KEY=  # Empty = no service key required
+```
+
+Middleware won't be added (see `app/main.py:145`):
+
+```python
+if settings.FLASH_SERVICE_KEY:
+    app.add_middleware(ServiceKeyMiddleware)
+```
+
+<Tip>
+Use service keys for internal deployments and JWT authentication for public-facing APIs with per-user billing.
+</Tip>

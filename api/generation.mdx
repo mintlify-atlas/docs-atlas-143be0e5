@@ -1,0 +1,303 @@
+---
+title: 'Generation Endpoints'
+description: 'Generate historical scenes with AI agents'
+---
+
+Generation endpoints create historical scenes using a 14-agent pipeline with critique loop. Dialog is reviewed for anachronisms and cultural errors, characters are capped at 6 with voice differentiation, and image prompts translate emotion into body language.
+
+## POST /api/v1/timepoints/generate/stream
+
+**Recommended.** Generate a scene with real-time progress via Server-Sent Events.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts credits based on preset.
+
+### Request Body
+
+<ParamField body="query" type="string" required>
+  Historical moment (3-500 characters)
+  
+  Example: `"Oppenheimer watches the Trinity test 5:29 AM July 16 1945"`
+</ParamField>
+
+<ParamField body="generate_image" type="boolean" default="false">
+  Generate AI image (adds ~30s to generation time)
+</ParamField>
+
+<ParamField body="preset" type="string" default="balanced">
+  Quality preset:
+  - `hyper` - Fastest (~55s) - `google/gemini-2.0-flash-001`
+  - `balanced` - Default (~90-110s) - `gemini-2.5-flash`
+  - `hd` - Best quality (~120-150s) - Extended thinking
+  - `gemini3` - Excellent (~60s) - `google/gemini-3-flash-preview`
+</ParamField>
+
+<ParamField body="text_model" type="string">
+  Override text model (ignores preset)
+  
+  Example: `"google/gemini-2.0-flash-001"`
+</ParamField>
+
+<ParamField body="image_model" type="string">
+  Override image model (ignores preset)
+  
+  Example: `"gemini-2.5-flash-image"`
+</ParamField>
+
+<ParamField body="visibility" type="string" default="public">
+  Scene visibility: `public` or `private`
+</ParamField>
+
+### Response (SSE Stream)
+
+Returns Server-Sent Events with generation progress:
+
+<ResponseField name="event" type="string">
+  Event type: `start`, `step_complete`, `step_error`, `done`, `error`
+</ResponseField>
+
+<ResponseField name="step" type="string">
+  Current pipeline step: `judge`, `timeline`, `scene`, `characters`, `moment`, `camera`, `dialog`, `image_prompt`, `image_generation`
+</ResponseField>
+
+<ResponseField name="progress" type="integer">
+  Progress percentage (0-100)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Step-specific data (model used, latency, etc.)
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "query": "Oppenheimer Trinity test control bunker 5:29 AM July 16 1945",
+    "preset": "hyper",
+    "generate_image": true
+  }'
+```
+
+**SSE Events:**
+
+```
+data: {"event": "start", "step": "initialization", "progress": 0}
+data: {"event": "step_complete", "step": "judge", "progress": 10}
+data: {"event": "step_complete", "step": "timeline", "progress": 20}
+data: {"event": "step_complete", "step": "scene", "progress": 30}
+data: {"event": "step_complete", "step": "characters", "progress": 50}
+data: {"event": "step_complete", "step": "dialog", "progress": 80}
+data: {"event": "done", "progress": 100, "data": {"timepoint_id": "abc123", "status": "completed"}}
+```
+
+<Note>
+The `image_generation` step only appears when `generate_image: true`. Without it, `done` follows `image_prompt` directly.
+</Note>
+
+---
+
+## POST /api/v1/timepoints/generate/sync
+
+Generate a scene synchronously. **Blocks 30-120 seconds** until complete.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts credits based on preset.
+
+### Request Body
+
+Same as streaming endpoint.
+
+### Response
+
+<ResponseField name="id" type="string">
+  Timepoint UUID
+</ResponseField>
+
+<ResponseField name="query" type="string">
+  Original query
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-safe slug
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Generation status: `completed`, `failed`, `processing`
+</ResponseField>
+
+<ResponseField name="year" type="integer">
+  Temporal year (negative for BCE)
+</ResponseField>
+
+<ResponseField name="month" type="integer">
+  Month (1-12)
+</ResponseField>
+
+<ResponseField name="day" type="integer">
+  Day of month
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Geographic location
+</ResponseField>
+
+<ResponseField name="has_image" type="boolean">
+  Whether an image was generated
+</ResponseField>
+
+<ResponseField name="image_url" type="string">
+  Base64 image data (if generated)
+</ResponseField>
+
+<ResponseField name="characters" type="object">
+  Character data with bios, roles, speaking styles
+</ResponseField>
+
+<ResponseField name="dialog" type="array">
+  Dialog lines with speaker and text
+</ResponseField>
+
+<ResponseField name="scene" type="object">
+  Scene setting, atmosphere, emotional tone
+</ResponseField>
+
+<ResponseField name="text_model_used" type="string">
+  Model used for text generation
+</ResponseField>
+
+<ResponseField name="image_model_used" type="string">
+  Model used for image generation
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Scene visibility: `public` or `private`
+</ResponseField>
+
+<ResponseField name="share_url" type="string">
+  Public share URL (null for private timepoints)
+</ResponseField>
+
+<ResponseField name="preset_used" type="string">
+  Quality preset used
+</ResponseField>
+
+<ResponseField name="generation_time_ms" type="integer">
+  Total generation time in milliseconds
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/sync \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "query": "Kasparov vs Deep Blue Game 6 1997",
+    "preset": "balanced",
+    "generate_image": false
+  }'
+```
+
+<Warning>
+This endpoint blocks until generation completes. Use streaming for better UX.
+</Warning>
+
+---
+
+## POST /api/v1/timepoints/generate
+
+Start background generation. Returns immediately with timepoint ID.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts credits based on preset.
+
+### Request Body
+
+Same as streaming endpoint, plus:
+
+<ParamField body="callback_url" type="string">
+  URL to POST results to when generation completes
+</ParamField>
+
+<ParamField body="request_context" type="object">
+  Opaque context passed through to response (e.g. `{"source": "clockchain", "job_id": "123"}`)
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Timepoint UUID
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Always `"processing"` on success
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+<ResponseField name="request_context" type="object">
+  Echoed from request
+</ResponseField>
+
+### Callback Payload (Success)
+
+When generation completes, Flash POSTs to `callback_url`:
+
+```json
+{
+  "timepoint": { /* full TimepointResponse */ },
+  "preset_used": "balanced",
+  "generation_time_ms": 95000,
+  "request_context": { /* echoed back */ }
+}
+```
+
+### Callback Payload (Failure)
+
+```json
+{
+  "id": "550e8400-...",
+  "status": "failed",
+  "error": "...",
+  "request_context": { /* echoed back */ }
+}
+```
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "query": "Turing Bletchley Park 1942",
+    "preset": "hyper",
+    "callback_url": "https://yourapp.com/webhook",
+    "request_context": {"job_id": "abc123"}
+  }'
+```
+
+<Tip>
+Poll `GET /api/v1/timepoints/{id}` to check completion status if you don't use a callback.
+</Tip>
+
+---
+
+## Credit Costs
+
+| Operation | Cost |
+|-----------|------|
+| `generate_balanced` | 5 credits |
+| `generate_hyper` | 5 credits |
+| `generate_hd` | 10 credits |
+| `generate_gemini3` | 5 credits |
+
+See [Credits](/api/credits) for balance and history endpoints.

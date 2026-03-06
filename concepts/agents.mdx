@@ -1,0 +1,256 @@
+---
+title: 'Agents'
+description: 'Specialized AI agents that power TIMEPOINT Flash generation'
+---
+
+TIMEPOINT Flash uses **15 specialized AI agents** that each handle one part of the scene generation process. This multi-agent architecture enables parallel execution, focused prompts, and self-correction.
+
+## Why Multiple Agents?
+
+Instead of one monolithic prompt, TIMEPOINT uses specialized agents for:
+
+1. **Speed** — Independent agents run in parallel, cutting generation time by ~40%
+2. **Quality** — Each agent has a focused prompt optimized for one task
+3. **Accuracy** — Grounding agent verifies facts via Google Search before generation
+4. **Self-correction** — Critique agent reviews output for errors and triggers retries
+5. **Reliability** — If image generation fails, you still get the complete scene
+6. **Visibility** — You see progress as each step completes
+
+## The 15 Agents
+
+| Agent | Job | Output |
+|-------|-----|--------|
+| **Judge** | Is this a valid historical query? | yes/no, confidence, detected figures |
+| **Timeline** | When exactly? | year, month, day, time of day |
+| **Grounding** | Verify facts via Google Search | verified location, date, participants, physical presence |
+| **Scene** | Where and what's the atmosphere? | location, weather, mood |
+| **CharacterIdentification** | Who's there? (fast detection) | Names, roles, up to 6 people |
+| **CharacterBio** | Detailed character profiles | Full bios with social registers, voice differentiation |
+| **Graph** | How do they relate? | Relationships, alliances, tensions, factions |
+| **Moment** | What's the dramatic tension? | Stakes, conflict, emotion, narrative arc |
+| **Dialog** | What are they saying? | Up to 7 voice-differentiated lines following narrative arc |
+| **Critique** | Any anachronisms or errors? | Issues list; retriggers dialog if critical |
+| **Camera** | How should we frame this? | Composition, focal point, shot type |
+| **ImagePrompt** | Describe the image in detail | ~5,000-11,000 character prompt with grounded facts |
+| **ImagePromptOptimizer** | Compress + physicalize emotion | ~77 words with tension translated to body language |
+| **ImageGen** | Create the image | Photorealistic scene (3-tier fallback) |
+| **Chat** | Talk to characters | Conversational responses in character |
+
+<Note>
+The **Characters** step actually uses 3 sub-agents internally: CharacterIdentification (detect who's present), Graph (extract relationships), and CharacterBio (generate detailed profiles).
+</Note>
+
+## Agent Details
+
+### Core Generation Agents
+
+<AccordionGroup>
+<Accordion title="Judge" icon="gavel">
+Validates temporal queries and classifies their type (historical, fictional, speculative). Extracts metadata like detected historical figures and approximate years.
+
+**Location:** `app/agents/judge.py:1`
+
+**Output:** `JudgeResult` with `is_valid`, `query_type`, `detected_figures`, `confidence`
+</Accordion>
+
+<Accordion title="Timeline" icon="clock">
+Extracts precise temporal coordinates: year, month, day, time of day, era, season. Uses grounded context when available.
+
+**Location:** `app/agents/timeline.py:1`
+
+**Output:** `TimelineData` with `year`, `month`, `day`, `time_of_day`, `era`, `season`
+</Accordion>
+
+<Accordion title="Grounding" icon="magnifying-glass">
+Verifies historical facts via Google Search. See [Grounding](/concepts/grounding) for details.
+
+**Location:** `app/agents/grounding.py:1`
+
+**Output:** `GroundedContext` with verified location, date, participants, physical presence
+</Accordion>
+
+<Accordion title="Scene" icon="location-dot">
+Generates environment details: setting description, atmosphere, weather, lighting, tension level.
+
+**Location:** `app/agents/scene.py:1`
+
+**Output:** `SceneData` with `setting`, `atmosphere`, `weather`, `lighting`, `tension_level`
+</Accordion>
+
+<Accordion title="Characters" icon="users">
+Orchestrates character generation using 3 sub-agents:
+1. **CharacterIdentification** — Fast detection of who's present
+2. **Graph** — Relationship extraction before bio generation
+3. **CharacterBio** — Detailed profiles with voice differentiation
+
+**Location:** `app/agents/characters.py:1`
+
+**Output:** `CharacterData` with up to 6 characters, focal character, group dynamics
+</Accordion>
+
+<Accordion title="Graph" icon="diagram-project">
+Extracts structured relationship networks: alliances, tensions, factions, power dynamics. No graph library used — pure LLM extraction.
+
+**Location:** `app/agents/graph.py:1`
+
+**Output:** `GraphData` with relationships (edges), factions, power dynamics, central conflict
+</Accordion>
+
+<Accordion title="Moment" icon="bolt">
+Identifies dramatic tension: stakes, conflict, emotional arc. Uses Vonnegut shapes and Freytag's pyramid for narrative structure.
+
+**Location:** `app/agents/moment.py:1`
+
+**Output:** `MomentData` with `stakes`, `conflict`, `emotion`, `tension_arc`
+</Accordion>
+
+<Accordion title="Dialog" icon="comments">
+Generates period-accurate dialog with voice differentiation. Follows narrative arc constraints (7 lines max) to avoid incoherent cross-talk.
+
+**Location:** `app/agents/dialog.py:1`
+
+**Output:** `DialogData` with up to 7 lines, speaker assignments, narrative arc
+</Accordion>
+
+<Accordion title="Critique" icon="clipboard-check">
+Reviews dialog for anachronisms, cultural errors, voice distinctiveness. Triggers retry if critical issues found (one retry max).
+
+**Location:** `app/agents/critique.py:1`
+
+**Output:** `CritiqueOutput` with issues list, severity levels, fix suggestions
+</Accordion>
+
+<Accordion title="Camera" icon="camera">
+Determines visual composition: shot type, focal point, camera angle, framing notes.
+
+**Location:** `app/agents/camera.py:1`
+
+**Output:** `CameraData` with `shot_type`, `focal_point`, `angle`, `framing_notes`
+</Accordion>
+
+<Accordion title="ImagePrompt" icon="file-lines">
+Assembles detailed image prompts (~5,000-11,000 chars) incorporating ALL pipeline data: grounded facts, characters, relationships, scene, camera.
+
+**Location:** `app/agents/image_prompt.py:1`
+
+**Output:** `ImagePromptData` with long-form prompt
+</Accordion>
+
+<Accordion title="ImagePromptOptimizer" icon="compress">
+Compresses prompts to ~77 words while translating emotion into physical body language ("high tension" → "clenched fists, tense posture").
+
+**Location:** `app/agents/image_prompt_optimizer.py:1`
+
+**Output:** Optimized string prompt (~77 words)
+</Accordion>
+
+<Accordion title="ImageGen" icon="image">
+Generates photorealistic images using Google's Nano Banana models with 3-tier fallback (Google → OpenRouter → Pollinations.ai).
+
+**Location:** `app/agents/image_gen.py:1`
+
+**Output:** `ImageGenResult` with base64 image data, format, dimensions
+</Accordion>
+</AccordionGroup>
+
+### Interaction Agents
+
+Three additional agents handle post-generation interactions:
+
+- **Chat** (`app/agents/character_chat.py:1`) — Talk to characters in the scene
+- **DialogExtension** (`app/agents/dialog_extension.py:1`) — Generate more dialog lines
+- **Survey** (`app/agents/survey.py:1`) — Ask all characters the same question
+
+<Warning>
+All interaction endpoints check timepoint visibility — private timepoints block non-owner access (403). When `AUTH_ENABLED=true`, interactions also require a Bearer JWT and deduct credits.
+</Warning>
+
+## Code Location
+
+All agents follow the same pattern:
+
+```python
+class YourAgent:
+    async def run(self, input: InputSchema) -> OutputSchema:
+        prompt = self._build_prompt(input)
+        return await self.router.call(prompt=prompt, response_model=OutputSchema)
+```
+
+**Agent directory structure:**
+
+```
+app/agents/
+├── judge.py                  # Query validation
+├── timeline.py               # Date extraction
+├── grounding.py              # Google Search fact verification
+├── scene.py                  # Environment
+├── character_identification.py  # Detect who's present
+├── character_bio.py          # Generate detailed bios
+├── characters.py             # Character orchestrator
+├── graph.py                  # Relationships
+├── moment.py                 # Dramatic tension
+├── dialog.py                 # Period dialog
+├── critique.py               # Quality review
+├── camera.py                 # Visual composition
+├── image_prompt.py           # Prompt assembly
+├── image_prompt_optimizer.py # Compress + physicalize
+├── image_gen.py              # Image generation
+├── character_chat.py         # Chat interactions
+├── dialog_extension.py       # Extended dialog
+└── survey.py                 # Multi-character survey
+```
+
+## Adding Your Own Agent
+
+1. **Create schema:** `app/schemas/your_agent.py`
+2. **Create prompt:** `app/prompts/your_agent.py`
+3. **Create agent:** `app/agents/your_agent.py`
+4. **Wire into pipeline:** `app/core/pipeline.py:1`
+5. **Add tests:** `tests/unit/test_your_agent.py`
+
+<CodeGroup>
+```python Example Agent
+from app.agents.base import BaseAgent, AgentResult
+from app.schemas import YourOutputSchema
+
+class YourAgent(BaseAgent[InputType, YourOutputSchema]):
+    response_model = YourOutputSchema
+    
+    def get_system_prompt(self) -> str:
+        return "You are an expert at..."
+    
+    def get_prompt(self, input_data: InputType) -> str:
+        return f"Process this: {input_data}"
+```
+
+```python Wire into Pipeline
+# In app/core/pipeline.py
+from app.agents import YourAgent
+
+class GenerationPipeline:
+    def __init__(self):
+        self._your_agent = YourAgent(router=self.router)
+    
+    async def _step_your_agent(self, state: PipelineState) -> PipelineState:
+        result = await self._your_agent.run(input_data)
+        state.your_data = result.content
+        return state
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Pipeline Execution" icon="diagram-next" href="/concepts/pipeline">
+    Learn how agents run in parallel phases
+  </Card>
+  <Card title="Grounding Agent" icon="magnifying-glass" href="/concepts/grounding">
+    Deep dive into Google Search verification
+  </Card>
+  <Card title="Quality Presets" icon="sliders" href="/concepts/quality-presets">
+    Configure agent models and parallelism
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/generation/create">
+    Use agents via the API
+  </Card>
+</CardGroup>

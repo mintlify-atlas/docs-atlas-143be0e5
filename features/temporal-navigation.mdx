@@ -1,0 +1,496 @@
+---
+title: 'Temporal Navigation'
+description: 'Jump forward and backward through time while preserving context'
+---
+
+Temporal navigation lets you move through time from any generated scene, creating linked sequences while preserving location, characters, and narrative coherence.
+
+<Note>
+When `AUTH_ENABLED=true`, temporal jumps require Bearer JWT and deduct 2 credits.
+</Note>
+
+---
+
+## How It Works
+
+Temporal navigation creates new scenes by:
+
+1. **Calculating target coordinates:** Year, month, day, time_of_day adjusted by the step size
+2. **Preserving context:** Location, characters, and scene atmosphere carry forward
+3. **Generating continuation:** New scene reflects what happened in the intervening time
+4. **Linking timepoints:** Source and target are connected via `parent_id` and `sequence_id`
+
+<Steps>
+  <Step title="Start with a Scene">
+    Generate a base timepoint:
+    ```bash
+    POST /api/v1/timepoints/generate
+    {"query": "Trinity test 5:29 AM July 16 1945"}
+    # Returns: id="abc123"
+    ```
+  </Step>
+  
+  <Step title="Jump Forward">
+    Move ahead in time:
+    ```bash
+    POST /api/v1/temporal/abc123/next
+    {"units": 1, "unit": "hour"}
+    # Returns: target_id="def456"
+    ```
+  </Step>
+  
+  <Step title="Retrieve New Scene">
+    Get the continuation:
+    ```bash
+    GET /api/v1/timepoints/def456?full=true
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Time Units
+
+| Unit | Behavior | Example Use Case |
+|------|----------|------------------|
+| `second` | Adjusts time_of_day within same day | Frame-by-frame analysis |
+| `minute` | Adjusts time_of_day within same day | Immediate aftermath |
+| `hour` | Changes time_of_day, may cross day boundary | Same-day progression |
+| `day` | Increments day, adjusts month/year | Multi-day events |
+| `week` | Adds 7 days | Short-term outcomes |
+| `month` | Increments month, adjusts year | Seasonal changes |
+| `year` | Increments year, preserves month/day | Long-term consequences |
+
+**Range:** 1-365 units per jump
+
+---
+
+## Jump Forward
+
+Generate the next moment in time.
+
+### API Endpoint
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/next \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "units": 1,
+    "unit": "hour"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "source_id": "550e8400-e29b-41d4-a716-446655440000",
+  "target_id": "661f9511-f3ba-42e3-b9d2-557766440000",
+  "source_year": 1945,
+  "target_year": 1945,
+  "direction": "next",
+  "units": 1,
+  "unit": "hour",
+  "message": "Generated moment 1 hour(s) forward"
+}
+```
+
+### Example: AlphaGo Aftermath
+
+**Source Scene** (Move 37):
+```
+Date: March 10, 2016, afternoon
+Location: Four Seasons Hotel, Seoul
+Characters: Lee Sedol, Commentators, AlphaGo (monitor)
+Dialog: Stunned reactions to Move 37
+```
+
+**Jump forward 1 hour:**
+```bash
+POST /api/v1/temporal/{id}/next
+{"units": 1, "unit": "hour"}
+```
+
+**Result Scene:**
+```
+Date: March 10, 2016, late afternoon
+Location: Four Seasons Hotel, Seoul (same room)
+Characters: Lee Sedol (now absent), Commentators (still analyzing), Tournament Officials
+Dialog: 
+  Commentator 1: "He left right after the adjournment. Didn't say a word."
+  Commentator 2: "Can you blame him? That move changed everything."
+  Official: "The game will resume tomorrow. Whether Lee Sedol will be... ready... remains to be seen."
+```
+
+Notice:
+- **Location preserved:** Still at Four Seasons Hotel
+- **Character continuity:** Lee Sedol is now absent (he left)
+- **Narrative coherence:** Dialog reflects what happened in the interim
+- **Atmosphere shift:** From stunned silence to analytical aftermath
+
+---
+
+## Jump Backward
+
+Generate the prior moment.
+
+### API Endpoint
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/prior \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "units": 2,
+    "unit": "day"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "source_id": "550e8400-e29b-41d4-a716-446655440000",
+  "target_id": "771f9622-g4cb-53f4-c0e3-668877550000",
+  "source_year": 1945,
+  "target_year": 1945,
+  "direction": "prior",
+  "units": 2,
+  "unit": "day",
+  "message": "Generated moment 2 day(s) backward"
+}
+```
+
+### Example: Trinity Preparation
+
+**Source Scene** (5:29 AM detonation):
+```
+Date: July 16, 1945, 5:29 AM
+Location: Control bunker S-10000, New Mexico
+Characters: Oppenheimer, Groves, Bainbridge, Fermi
+Moment: The detonation
+```
+
+**Jump backward 1 day:**
+```bash
+POST /api/v1/temporal/{id}/prior
+{"units": 1, "unit": "day"}
+```
+
+**Result Scene:**
+```
+Date: July 15, 1945, 5:29 AM
+Location: Control bunker S-10000, New Mexico
+Characters: Oppenheimer, Groves, Bainbridge
+Dialog:
+  Groves: "Weather report says tomorrow might be our window."
+  Oppenheimer: "Then tomorrow it is."
+  Bainbridge: "We're as ready as we'll ever be. God help us."
+```
+
+The scene shows preparation and anticipation rather than aftermath.
+
+---
+
+## Timeline Sequences
+
+Retrieve all linked scenes in a temporal sequence.
+
+### Get Linked Scenes
+
+```bash
+curl "http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/sequence?direction=both&limit=10"
+```
+
+**Response:**
+
+```json
+{
+  "center": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "year": 1945,
+    "slug": "trinity-test-detonation-abc123"
+  },
+  "prior": [
+    {
+      "id": "440d7300-d18a-31c3-a605-335544330000",
+      "year": 1945,
+      "slug": "trinity-test-preparation-xyz789"
+    }
+  ],
+  "next": [
+    {
+      "id": "661f9511-f3ba-42e3-b9d2-557766440000",
+      "year": 1945,
+      "slug": "trinity-test-aftermath-def456"
+    },
+    {
+      "id": "772f9622-g3db-43f4-b1e3-668877550000",
+      "year": 1945,
+      "slug": "trinity-test-one-week-later-ghi789"
+    }
+  ]
+}
+```
+
+### Direction Parameter
+
+<CodeGroup>
+
+```bash Both (Default)
+curl ".../sequence?direction=both"
+# Returns prior AND next timepoints
+```
+
+```bash Prior Only
+curl ".../sequence?direction=prior"
+# Returns only timepoints before center
+```
+
+```bash Next Only
+curl ".../sequence?direction=next"
+# Returns only timepoints after center
+```
+
+</CodeGroup>
+
+### Limit Parameter
+
+Control how many timepoints to return per direction:
+
+```bash
+curl ".../sequence?direction=both&limit=5"
+# Returns up to 5 prior and 5 next timepoints
+```
+
+Max limit: 50 per direction
+
+<Warning>
+**Multiple children:** When a timepoint has multiple children (from separate time-jumps), the sequence follows the **most recently created** child.
+</Warning>
+
+---
+
+## Use Cases
+
+### Track an Event Over Time
+
+```
+Query: "Trinity test 5:29 AM July 16 1945"
+  ← 1 day: Preparation and final checks
+  [CENTER]: The detonation
+  → 1 hour: Immediate aftermath, scientists processing what happened
+  → 1 day: Potsdam Conference telegram
+  → 3 weeks: Hiroshima
+```
+
+### Explore a Single Day
+
+```
+Query: "Leonardo da Vinci in his workshop, morning"
+  [CENTER]: Morning work session
+  → 4 hours: Midday meal with apprentices
+  → 4 hours: Afternoon painting session
+  → 4 hours: Evening by candlelight, sketching
+```
+
+### Before and After Analysis
+
+```
+Query: "Alan Turing's arrest, 1952"
+  ← 1 hour: Turing answers the door
+  [CENTER]: Police interrogation begins
+  → 1 hour: Turing alone, processing
+  → 1 week: Court appearance
+```
+
+### Dramatic Build-Up
+
+```
+Query: "Gavrilo Princip at Schiller's Deli, June 28 1914"
+  ← 1 hour: Archduke's motorcade departs city hall
+  ← 10 minutes: Wrong turn onto Franz Joseph Street
+  [CENTER]: Car stops in front of Princip
+  → 10 seconds: Shots fired
+  → 1 hour: Chaos in the streets
+```
+
+---
+
+## What Gets Preserved
+
+When jumping through time:
+
+<CardGroup cols={2}>
+  <Card title="Location" icon="map-pin">
+    Same place, same venue  
+    "Four Seasons Hotel, Seoul" → "Four Seasons Hotel, Seoul"
+  </Card>
+  
+  <Card title="Characters" icon="users">
+    Same people (aged appropriately)  
+    "Lee Sedol (35)" → "Lee Sedol (36)" (after 1 year)
+  </Card>
+  
+  <Card title="Context" icon="book">
+    Story continues coherently  
+    References prior events, reflects intervening time
+  </Card>
+  
+  <Card title="Atmosphere" icon="cloud">
+    May shift based on time  
+    "Tense anticipation" → "Exhausted relief"
+  </Card>
+</CardGroup>
+
+### What Changes
+
+- **Time of day:** Updates based on units
+- **Season:** Changes if crossing seasonal boundaries
+- **Character states:** Reflect what happened in between
+- **Scene details:** Show passage of time (lighting, weather, objects moved)
+- **Dialog:** References prior moment, shows progression
+
+---
+
+## BCE/CE Handling
+
+Dates before year 1 use negative numbers:
+
+| Date | API Value |
+|------|----------|
+| 50 BCE | -50 |
+| 500 BCE | -500 |
+| 44 BCE (Caesar's death) | -44 |
+| 1 CE | 1 |
+| 50 CE | 50 |
+
+### Example: Roman History
+
+```bash
+# Generate Caesar's assassination
+POST /api/v1/timepoints/generate
+{"query": "Caesar's assassination, Ides of March 44 BCE"}
+# Result: year=-44
+
+# Jump forward 100 years to early Roman Empire
+POST /api/v1/temporal/{id}/next
+{"units": 100, "unit": "year"}
+# Result: year=56 (crosses BCE/CE boundary)
+```
+
+---
+
+## Visibility & Access Control
+
+Temporal navigation respects timepoint visibility:
+
+<Tabs>
+  <Tab title="Public Source">
+    Anyone can jump forward/backward  
+    New timepoint inherits public visibility
+  </Tab>
+  
+  <Tab title="Private Source (Owner)">
+    Owner can jump forward/backward  
+    New timepoint inherits private visibility
+  </Tab>
+  
+  <Tab title="Private Source (Non-Owner)">
+    **403 Forbidden**  
+    Cannot create temporal jumps from others' private timepoints
+  </Tab>
+</Tabs>
+
+When `AUTH_ENABLED=false`, all timepoints are effectively public.
+
+---
+
+## Implementation Details
+
+From `docs/TEMPORAL.md` and pipeline source:
+
+### Time Calculation
+
+```python
+# From temporal service
+def calculate_target_date(source: Timepoint, units: int, unit: str, direction: str):
+    # Extract source temporal coordinates
+    year, month, day = source.year, source.month, source.day
+    time_of_day = source.time_of_day
+    
+    # Apply offset based on unit
+    if unit == "year":
+        year += units * (1 if direction == "next" else -1)
+    elif unit == "month":
+        month += units * (1 if direction == "next" else -1)
+        # Handle month overflow/underflow
+    elif unit == "day":
+        day += units * (1 if direction == "next" else -1)
+        # Handle day overflow, month boundaries
+    # ... etc for hour, minute, second
+    
+    return (year, month, day, time_of_day)
+```
+
+### Query Generation
+
+```python
+# Temporal query template
+query = f"""
+The same scene at {location}, now {target_year}.
+Continuing from: {source_scene_summary}
+What has changed: {what_changed_in_interval}
+"""
+```
+
+The pipeline generates a full scene using the standard agent flow but with temporal context.
+
+---
+
+## Tips
+
+<CardGroup cols={2}>
+  <Card title="Start Sharp" icon="crosshairs">
+    Begin with a specific, clear moment  
+    Better jumps come from precise starting points
+  </Card>
+  
+  <Card title="Match Units" icon="ruler">
+    Hours for same-day drama  
+    Years for historical arcs
+  </Card>
+  
+  <Card title="Keep Chains Short" icon="link">
+    5-10 linked scenes work best  
+    Avoid 100+ step sequences
+  </Card>
+  
+  <Card title="Check Completion" icon="check">
+    Only jump from completed scenes  
+    Status must be `completed`
+  </Card>
+</CardGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scene Generation" icon="wand-magic-sparkles" href="/features/scene-generation">
+    Generate the initial timepoint
+  </Card>
+  
+  <Card title="Character Interactions" icon="comments" href="/features/character-interactions">
+    Chat with characters in any linked scene
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/temporal">
+    Complete temporal endpoint docs
+  </Card>
+  
+  <Card title="Guides" icon="book" href="/guides/temporal-sequences">
+    Advanced temporal sequence patterns
+  </Card>
+</CardGroup>

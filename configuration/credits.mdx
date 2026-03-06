@@ -1,0 +1,626 @@
+---
+title: Credit System
+description: Credit costs, balance management, billing hooks, and transaction ledger
+---
+
+TIMEPOINT Flash uses a credit-based system to manage API usage. Credits are only enforced when `AUTH_ENABLED=true`.
+
+<Note>
+**Open Access Mode:** When `AUTH_ENABLED=false`, credit checks are bypassed and all operations are unlimited.
+</Note>
+
+## Credit Costs
+
+Each operation costs a fixed number of credits:
+
+<ParamField path="generate_balanced" type="operation" cost="5">
+  Standard quality timepoint generation.
+  
+  **Preset:** Balanced (Gemini 2.5 Flash)
+</ParamField>
+
+<ParamField path="generate_hd" type="operation" cost="10">
+  Highest quality timepoint generation.
+  
+  **Preset:** HD (Gemini 2.5 Flash + Nano Banana Pro 2K images)
+  
+  **Why more expensive:** Premium image generation model
+</ParamField>
+
+<ParamField path="generate_hyper" type="operation" cost="5">
+  Fastest speed timepoint generation.
+  
+  **Preset:** Hyper (Gemini 2.0 Flash via OpenRouter)
+</ParamField>
+
+<ParamField path="generate_gemini3" type="operation" cost="5">
+  Latest Gemini 3 Flash Preview (thinking model).
+  
+  **Preset:** Gemini 3 (via OpenRouter)
+</ParamField>
+
+<ParamField path="chat" type="operation" cost="1">
+  Chat with a character from a generated timepoint.
+  
+  **Endpoint:** `POST /api/v1/interactions/{id}/chat`
+</ParamField>
+
+<ParamField path="temporal_jump" type="operation" cost="2">
+  Time travel forward or backward from a timepoint.
+  
+  **Endpoints:**
+  - `POST /api/v1/temporal/{id}/next`
+  - `POST /api/v1/temporal/{id}/prior`
+</ParamField>
+
+### Fetch Live Costs
+
+```bash
+GET /api/v1/credits/costs
+```
+
+**Response:**
+```json
+{
+  "costs": {
+    "generate_balanced": 5,
+    "generate_hd": 10,
+    "generate_hyper": 5,
+    "generate_gemini3": 5,
+    "chat": 1,
+    "temporal_jump": 2
+  }
+}
+```
+
+<Note>
+This endpoint requires no authentication and returns real-time costs from `app/auth/credits.py:CREDIT_COSTS`.
+</Note>
+
+## Credit Flow
+
+### 1. Sign-Up Credits
+
+New users receive free credits on first sign-in (configurable via `SIGNUP_CREDITS`).
+
+```bash
+SIGNUP_CREDITS=50  # Default: 50 credits
+```
+
+**Value calculation:**
+- 50 credits = 5-10 timepoint generations
+- 50 credits = 50 chat interactions
+- 50 credits = 25 temporal jumps
+
+**Transaction type:** `signup_bonus`
+
+### 2. Check Balance
+
+Before any operation, check if the user has sufficient credits:
+
+```bash
+GET /api/v1/credits/balance
+Authorization: Bearer <access_token>
+```
+
+**Response:**
+```json
+{
+  "balance": 45,
+  "lifetime_earned": 50,
+  "lifetime_spent": 5
+}
+```
+
+<Tip>
+**iOS UI:** Display balance in navigation bar or settings screen. Update after each operation.
+</Tip>
+
+### 3. Spend Credits
+
+Credits are automatically deducted when you call generation/interaction endpoints:
+
+```bash
+POST /api/v1/timepoints/generate/sync
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "query": "Oppenheimer Trinity test 1945",
+  "preset": "balanced"
+}
+```
+
+**Flow:**
+1. **Check balance** - Is `balance >= 5`?
+2. **Deduct credits** - `balance -= 5`
+3. **Record transaction** - Append to immutable ledger
+4. **Execute operation** - Generate timepoint
+5. **Return result** - Include updated balance
+
+**On insufficient credits:**
+```json
+{
+  "detail": "Insufficient credits. This operation costs 5 credits.",
+  "status_code": 402
+}
+```
+
+### 4. Insufficient Credits (402 Response)
+
+When a user lacks credits, the API returns **402 Payment Required**:
+
+**Response:**
+```json
+{
+  "detail": "Insufficient credits. This operation costs 10 credits.",
+  "balance": 3,
+  "required": 10,
+  "shortfall": 7
+}
+```
+
+**iOS handling:**
+```swift
+if response.statusCode == 402 {
+    let alert = UIAlertController(
+        title: "Insufficient Credits",
+        message: "You need \(shortfall) more credits to generate this scene.",
+        preferredStyle: .alert
+    )
+    alert.addAction(UIAlertAction(title: "Get Credits", style: .default) { _ in
+        // Future: Navigate to IAP purchase flow
+    })
+    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    present(alert, animated: true)
+}
+```
+
+## Transaction Ledger
+
+All credit operations are recorded in an **append-only immutable ledger** (`credit_transactions` table).
+
+### Schema
+
+```python
+class CreditTransaction:
+    id: str                    # UUID
+    credit_account_id: str     # Links to credit_account
+    amount: int                # Positive = grant, Negative = spend
+    balance_after: int         # Snapshot of balance after transaction
+    transaction_type: TransactionType
+    reference_id: str | None   # timepoint_id or other reference
+    description: str | None    # Human-readable note
+    created_at: datetime       # Transaction timestamp
+```
+
+### Transaction Types
+
+<ParamField path="signup_bonus" type="TransactionType">
+  Free credits granted on first sign-in.
+  
+  **Amount:** Positive (e.g., +50)
+</ParamField>
+
+<ParamField path="generation" type="TransactionType">
+  Credits spent on timepoint generation.
+  
+  **Amount:** Negative (e.g., -5, -10)
+  
+  **Reference:** `timepoint_id`
+</ParamField>
+
+<ParamField path="chat" type="TransactionType">
+  Credits spent on character chat interactions.
+  
+  **Amount:** Negative (e.g., -1)
+  
+  **Reference:** `timepoint_id`
+</ParamField>
+
+<ParamField path="temporal" type="TransactionType">
+  Credits spent on temporal jumps (time travel).
+  
+  **Amount:** Negative (e.g., -2)
+  
+  **Reference:** `timepoint_id`
+</ParamField>
+
+<ParamField path="admin_grant" type="TransactionType">
+  Credits granted by admin (dev/testing only).
+  
+  **Amount:** Positive (e.g., +100)
+  
+  **Note:** Only available when `ADMIN_API_KEY` is set
+</ParamField>
+
+<ParamField path="apple_iap" type="TransactionType">
+  Credits purchased via Apple In-App Purchase.
+  
+  **Amount:** Positive (e.g., +100, +500, +1000)
+  
+  **Note:** Used by `timepoint-billing` module (not in open source)
+</ParamField>
+
+<ParamField path="stripe_purchase" type="TransactionType">
+  Credits purchased via Stripe.
+  
+  **Amount:** Positive (e.g., +100, +500, +1000)
+  
+  **Note:** Used by `timepoint-billing` module
+</ParamField>
+
+<ParamField path="subscription_grant" type="TransactionType">
+  Credits granted via subscription (monthly/annual).
+  
+  **Amount:** Positive (e.g., +500)
+  
+  **Note:** Used by `timepoint-billing` module
+</ParamField>
+
+<ParamField path="refund" type="TransactionType">
+  Credits refunded (e.g., failed operation).
+  
+  **Amount:** Positive (e.g., +5)
+</ParamField>
+
+### Transaction History
+
+Fetch paginated transaction history:
+
+```bash
+GET /api/v1/credits/history?limit=20&offset=0
+Authorization: Bearer <access_token>
+```
+
+**Response:**
+```json
+{
+  "transactions": [
+    {
+      "id": "uuid",
+      "amount": -5,
+      "balance_after": 45,
+      "transaction_type": "generation",
+      "reference_id": "timepoint_uuid",
+      "description": "Generated: Oppenheimer Trinity test 1945",
+      "created_at": "2026-03-06T12:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "amount": 50,
+      "balance_after": 50,
+      "transaction_type": "signup_bonus",
+      "description": "Welcome bonus",
+      "created_at": "2026-03-01T10:00:00Z"
+    }
+  ],
+  "total": 2,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+**Pagination:**
+- `limit` - Number of transactions per page (default: 20, max: 100)
+- `offset` - Number of transactions to skip (default: 0)
+
+## Admin Credit Management
+
+For testing and customer support, admins can grant credits manually.
+
+<Warning>
+**Security:** Only enable admin endpoints in development/staging. Never set `ADMIN_API_KEY` in production.
+</Warning>
+
+### Grant Credits
+
+```bash
+POST /api/v1/credits/admin/grant
+X-Admin-Key: your_admin_key_here
+Content-Type: application/json
+
+{
+  "user_id": "user_uuid",
+  "amount": 100,
+  "transaction_type": "admin_grant",
+  "description": "Customer support credit grant"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "txn_uuid",
+  "amount": 100,
+  "balance_after": 150,
+  "transaction_type": "admin_grant",
+  "description": "Customer support credit grant",
+  "created_at": "2026-03-06T12:00:00Z"
+}
+```
+
+**Parameters:**
+- `user_id` - Target user UUID (required)
+- `amount` - Credits to grant (positive integer, required)
+- `transaction_type` - Transaction type (optional, defaults to `admin_grant`)
+- `description` - Human-readable note (optional)
+
+**Access control:**
+- `ADMIN_API_KEY` empty → 403 Forbidden
+- Wrong admin key → 403 Forbidden
+
+### Supported Transaction Types for Grants
+
+The admin grant endpoint accepts an optional `transaction_type` parameter for proper ledger categorization:
+
+- `admin_grant` (default) - Manual admin grant
+- `stripe_purchase` - Stripe payment processed
+- `apple_iap` - Apple IAP processed
+- `subscription_grant` - Subscription credits
+- `refund` - Refund for failed operation
+
+**Example: Grant credits from Stripe webhook**
+```bash
+POST /api/v1/credits/admin/grant
+X-Admin-Key: billing_service_key
+
+{
+  "user_id": "user_uuid",
+  "amount": 500,
+  "transaction_type": "stripe_purchase",
+  "description": "Stripe payment: 500 credits pack"
+}
+```
+
+## Billing Provider Integration
+
+The open-source app ships with `NoOpBilling` (unlimited access). Production deployments can integrate a billing service via the `BillingProvider` protocol.
+
+### Protocol Definition
+
+```python
+class BillingProvider(Protocol):
+    """Abstract billing provider."""
+    
+    async def check_credits(self, user_id: str, cost: int) -> bool:
+        """Check if user has sufficient credits."""
+        ...
+    
+    async def on_credits_granted(
+        self, user_id: str, amount: int, source: str
+    ) -> None:
+        """Called after credits are granted."""
+        ...
+```
+
+### Default Implementation (Open Source)
+
+```python
+class NoOpBilling:
+    """Default: open access, no billing."""
+    
+    async def check_credits(self, user_id: str, cost: int) -> bool:
+        return True  # Unlimited access
+    
+    async def on_credits_granted(
+        self, user_id: str, amount: int, source: str
+    ) -> None:
+        pass  # No-op
+```
+
+### Production Billing Module
+
+The deployed version (`timepoint-flash-deploy`) uses a separate billing microservice:
+
+**Architecture:**
+```
+iOS App → Flash API → Billing Service
+                      ├── Apple IAP verification
+                      ├── Stripe payment processing
+                      ├── Subscription management
+                      └── Credit grants (via admin endpoint)
+```
+
+**Integration points:**
+1. **Credit checks** - Billing service maintains authoritative balance
+2. **Purchase flows** - iOS IAP/web Stripe → billing service → Flash admin grant
+3. **Webhook handlers** - Stripe/Apple webhooks → billing service → Flash
+
+**Internal API:**
+```bash
+# Service-to-service credit grant
+POST /api/v1/credits/admin/grant
+X-Admin-Key: billing_service_shared_secret
+
+{
+  "user_id": "user_uuid",
+  "amount": 500,
+  "transaction_type": "apple_iap",
+  "description": "Apple IAP: 500 credits pack"
+}
+```
+
+## Credit System Architecture
+
+### Database Schema
+
+```sql
+-- Credit accounts (one per user)
+CREATE TABLE credit_accounts (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) UNIQUE NOT NULL,
+    balance INTEGER NOT NULL DEFAULT 0,
+    lifetime_earned INTEGER NOT NULL DEFAULT 0,
+    lifetime_spent INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Immutable transaction ledger
+CREATE TABLE credit_transactions (
+    id VARCHAR(36) PRIMARY KEY,
+    credit_account_id VARCHAR(36) NOT NULL,
+    amount INTEGER NOT NULL,  -- Positive = grant, Negative = spend
+    balance_after INTEGER NOT NULL,
+    transaction_type VARCHAR(50) NOT NULL,
+    reference_id VARCHAR(36),  -- timepoint_id or other reference
+    description TEXT,
+    created_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (credit_account_id) REFERENCES credit_accounts(id)
+);
+
+CREATE INDEX idx_credit_transactions_account ON credit_transactions(credit_account_id);
+CREATE INDEX idx_credit_transactions_created ON credit_transactions(created_at DESC);
+```
+
+### Core Functions
+
+**Check balance** (`app/auth/credits.py`):
+```python
+async def check_balance(
+    session: AsyncSession, user_id: str, cost: int
+) -> bool:
+    """Check whether a user has sufficient credits."""
+    account = await _get_account(session, user_id)
+    return account.balance >= cost
+```
+
+**Spend credits** (atomic operation):
+```python
+async def spend_credits(
+    session: AsyncSession,
+    user_id: str,
+    cost: int,
+    transaction_type: TransactionType,
+    reference_id: str | None = None,
+    description: str | None = None,
+) -> CreditTransaction:
+    """
+    Deduct credits and record ledger entry.
+    
+    Raises:
+        ValueError: If insufficient balance
+    """
+    account = await _get_account(session, user_id)
+    
+    if account.balance < cost:
+        raise ValueError(
+            f"Insufficient credits: have {account.balance}, need {cost}"
+        )
+    
+    account.balance -= cost
+    account.lifetime_spent += cost
+    
+    txn = CreditTransaction(
+        credit_account_id=account.id,
+        amount=-cost,
+        balance_after=account.balance,
+        transaction_type=transaction_type,
+        reference_id=reference_id,
+        description=description,
+    )
+    session.add(txn)
+    return txn
+```
+
+**Grant credits**:
+```python
+async def grant_credits(
+    session: AsyncSession,
+    user_id: str,
+    amount: int,
+    transaction_type: TransactionType,
+    description: str | None = None,
+) -> CreditTransaction:
+    """Add credits and record ledger entry."""
+    account = await _get_account(session, user_id)
+    
+    account.balance += amount
+    account.lifetime_earned += amount
+    
+    txn = CreditTransaction(
+        credit_account_id=account.id,
+        amount=amount,
+        balance_after=account.balance,
+        transaction_type=transaction_type,
+        description=description,
+    )
+    session.add(txn)
+    return txn
+```
+
+## iOS Client Implementation
+
+### Credit Balance Display
+
+```swift
+struct CreditsView: View {
+    @StateObject private var viewModel = CreditsViewModel()
+    
+    var body: some View {
+        VStack {
+            Text("\(viewModel.balance) credits")
+                .font(.largeTitle)
+            
+            Text("Earned: \(viewModel.lifetimeEarned)")
+            Text("Spent: \(viewModel.lifetimeSpent)")
+            
+            List(viewModel.transactions) { txn in
+                TransactionRow(transaction: txn)
+            }
+        }
+        .task {
+            await viewModel.loadBalance()
+            await viewModel.loadHistory()
+        }
+    }
+}
+
+class CreditsViewModel: ObservableObject {
+    @Published var balance = 0
+    @Published var lifetimeEarned = 0
+    @Published var lifetimeSpent = 0
+    @Published var transactions: [Transaction] = []
+    
+    func loadBalance() async {
+        let response = try await api.getBalance()
+        await MainActor.run {
+            self.balance = response.balance
+            self.lifetimeEarned = response.lifetime_earned
+            self.lifetimeSpent = response.lifetime_spent
+        }
+    }
+}
+```
+
+### Pre-Generation Credit Check
+
+```swift
+func generateTimepoint(query: String, preset: Preset) async throws {
+    // Check balance before generation
+    let costs = try await api.getCosts()
+    let cost = costs[preset.rawValue] ?? 5
+    
+    if balance < cost {
+        throw InsufficientCreditsError(
+            required: cost,
+            available: balance
+        )
+    }
+    
+    // Proceed with generation
+    let result = try await api.generate(query: query, preset: preset)
+    
+    // Update balance from response
+    await loadBalance()
+}
+```
+
+## Related Documentation
+
+- [Environment Variables](/configuration/environment) - Credit configuration (`SIGNUP_CREDITS`, `BILLING_ENABLED`)
+- [Authentication](/configuration/authentication) - User accounts and admin endpoints
+- [Generation API](/api-reference/generation/sync) - How credits are deducted during generation
+- [iOS Integration Guide](https://github.com/yourusername/timepoint-flash/blob/main/docs/IOS_INTEGRATION.md) - Complete iOS client guide

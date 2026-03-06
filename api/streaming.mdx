@@ -1,0 +1,387 @@
+---
+title: "SSE Streaming"
+description: "Real-time generation progress via Server-Sent Events"
+---
+
+## Overview
+
+The streaming endpoint provides real-time progress updates during scene generation via Server-Sent Events (SSE). Each pipeline step emits an event as it completes, giving you visibility into the 14-agent generation process.
+
+**Endpoint:** `POST /api/v1/timepoints/generate/stream`
+
+**Best for:** Web clients, CLI tools, and environments with native SSE support.
+
+<Warning>
+iOS apps should use `/generate/sync` instead — `URLSession` doesn't natively support SSE. See the [iOS Client guide](/api/ios-client) for alternatives.
+</Warning>
+
+---
+
+## Event Protocol
+
+All events follow the SSE format:
+
+```
+data: {"event": "<type>", "step": "<name>", "progress": <0-100>}
+
+```
+
+Each event is a JSON object with:
+- `event` — Event type (`start`, `step_complete`, `step_error`, `done`, `error`)
+- `step` — Current pipeline step name
+- `progress` — Progress percentage (0-100)
+- `data` — Optional event-specific data
+- `error` — Error message (only in error events)
+
+---
+
+## Event Types
+
+### start
+
+Generation has begun.
+
+```json
+{
+  "event": "start",
+  "step": "initialization",
+  "progress": 0,
+  "data": {
+    "query": "Oppenheimer watches the Trinity test 5:29 AM July 16 1945",
+    "generate_image": true,
+    "preset": "hyper"
+  }
+}
+```
+
+### step_complete
+
+A pipeline step finished successfully.
+
+```json
+{
+  "event": "step_complete",
+  "step": "judge",
+  "progress": 10,
+  "data": {
+    "latency_ms": 856,
+    "model_used": "google/gemini-2.0-flash-001"
+  }
+}
+```
+
+### step_error
+
+A pipeline step failed (generation continues with fallback).
+
+```json
+{
+  "event": "step_error",
+  "step": "image_generation",
+  "progress": 90,
+  "error": "Google Imagen quota exhausted, falling back to OpenRouter"
+}
+```
+
+### done
+
+Generation complete. The timepoint has been saved to the database.
+
+```json
+{
+  "event": "done",
+  "step": "complete",
+  "progress": 100,
+  "data": {
+    "timepoint_id": "550e8400-e29b-41d4-a716-446655440000",
+    "slug": "oppenheimer-trinity-test-1945-abc123",
+    "status": "completed",
+    "year": 1945,
+    "location": "Control bunker S-10000, Jornada del Muerto, New Mexico",
+    "total_latency_ms": 58432,
+    "has_image": true,
+    "saved": true
+  }
+}
+```
+
+### error
+
+Fatal error — generation aborted.
+
+```json
+{
+  "event": "error",
+  "error": "All providers failed: rate limit exceeded",
+  "progress": 45
+}
+```
+
+---
+
+## Pipeline Steps
+
+Progress percentages for each step:
+
+| Step | Progress | Description |
+|------|----------|-------------|
+| `initialization` | 0% | Starting generation |
+| `judge` | 10% | Query validation |
+| `timeline` | 20% | Date extraction |
+| `scene` | 30% | Environment & atmosphere |
+| `characters` | 50% | Character identification, relationships, bios (3 sub-agents) |
+| `moment` | 65% | Dramatic tension (parallel with camera) |
+| `camera` | 65% | Visual composition (parallel with moment) |
+| `dialog` | 80% | Period-accurate dialog with voice differentiation |
+| `image_prompt` | 90% | Image prompt assembly |
+| `image_generation` | 100% | Image generation (only if `generate_image: true`) |
+
+<Info>
+The `image_generation` step only appears when `generate_image: true`. Without it, `done` follows `image_prompt` directly at 90% → 100%.
+</Info>
+
+---
+
+## Request Format
+
+```bash
+curl -X POST https://your-app.railway.app/api/v1/timepoints/generate/stream \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Oppenheimer Trinity test control bunker 5:29 AM July 16 1945",
+    "preset": "hyper",
+    "generate_image": true
+  }'
+```
+
+**Request body** (same as `/generate/sync`):
+
+<ParamField path="query" type="string" required>
+  Historical moment description (3-500 characters)
+</ParamField>
+
+<ParamField path="generate_image" type="boolean" default="false">
+  Generate AI image (adds ~30s to generation time)
+</ParamField>
+
+<ParamField path="preset" type="string" default="balanced">
+  Quality preset: `hyper` (fastest), `balanced` (recommended), `hd` (best quality), `gemini3`
+</ParamField>
+
+<ParamField path="text_model" type="string">
+  Override text model (ignores preset). Example: `"google/gemini-2.0-flash-001"`
+</ParamField>
+
+<ParamField path="image_model" type="string">
+  Override image model (ignores preset). Example: `"gemini-2.5-flash-image"`
+</ParamField>
+
+<ParamField path="visibility" type="string" default="public">
+  `"public"` or `"private"` — controls who can see full data
+</ParamField>
+
+---
+
+## Response Headers
+
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+X-Accel-Buffering: no
+```
+
+The `X-Accel-Buffering: no` header disables nginx buffering for real-time streaming.
+
+---
+
+## Client Examples
+
+### JavaScript (Browser)
+
+```javascript
+const eventSource = new EventSource(
+  'https://your-app.railway.app/api/v1/timepoints/generate/stream?' + 
+  new URLSearchParams({
+    query: 'Oppenheimer Trinity test 1945',
+    preset: 'hyper',
+    generate_image: 'true'
+  })
+);
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  
+  switch (data.event) {
+    case 'start':
+      console.log('Generation started:', data.data.query);
+      break;
+      
+    case 'step_complete':
+      console.log(`Step complete: ${data.step} (${data.progress}%)`);
+      updateProgressBar(data.progress);
+      break;
+      
+    case 'done':
+      console.log('Complete:', data.data);
+      eventSource.close();
+      navigateToTimepoint(data.data.timepoint_id);
+      break;
+      
+    case 'error':
+      console.error('Error:', data.error);
+      eventSource.close();
+      showError(data.error);
+      break;
+  }
+};
+
+eventSource.onerror = (error) => {
+  console.error('SSE connection error:', error);
+  eventSource.close();
+};
+```
+
+### Python (httpx)
+
+```python
+import httpx
+import json
+
+async def stream_generation(query: str):
+    url = "https://your-app.railway.app/api/v1/timepoints/generate/stream"
+    headers = {"Authorization": f"Bearer {token}"}
+    json_data = {"query": query, "preset": "hyper", "generate_image": True}
+    
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST", url, json=json_data, headers=headers
+        ) as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    
+                    if data["event"] == "step_complete":
+                        print(f"{data['step']}: {data['progress']}%")
+                    
+                    elif data["event"] == "done":
+                        print(f"Complete: {data['data']['timepoint_id']}")
+                        return data["data"]
+                    
+                    elif data["event"] == "error":
+                        raise Exception(data["error"])
+
+# Usage
+result = await stream_generation("signing of the declaration")
+print(f"Scene created: {result['slug']}")
+```
+
+### cURL (with jq)
+
+```bash
+curl -N -X POST https://your-app.railway.app/api/v1/timepoints/generate/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Kasparov Deep Blue Game 6 1997",
+    "preset": "hyper",
+    "generate_image": true
+  }' | while IFS= read -r line; do
+    if [[ $line == data:* ]]; then
+      echo "$line" | sed 's/^data: //' | jq -r '
+        if .event == "step_complete" then
+          "\(.step): \(.progress)%"
+        elif .event == "done" then
+          "Complete: \(.data.timepoint_id)"
+        elif .event == "error" then
+          "ERROR: \(.error)"
+        else
+          .
+        end
+      '
+    fi
+  done
+```
+
+---
+
+## Error Handling
+
+### Partial Failures
+
+If a non-critical step fails, generation continues and you'll receive both `step_error` and the final `done` event:
+
+```json
+// Image generation failed, but scene still completes
+data: {"event": "step_error", "step": "image_generation", "error": "..."}
+data: {"event": "done", "data": {"has_image": false, "status": "completed"}}
+```
+
+### Fatal Errors
+
+Critical failures abort generation and send an `error` event:
+
+```json
+data: {"event": "error", "error": "Query validation failed: not a historical query"}
+```
+
+The connection closes after an error event.
+
+---
+
+## Database Persistence
+
+The timepoint is saved to the database **before** the `done` event is sent. The `data.saved: true` field confirms successful persistence.
+
+If database save fails, you'll receive an error event with `step: "database_save"`:
+
+```json
+{
+  "event": "error",
+  "step": "database_save",
+  "error": "Failed to save timepoint: connection timeout",
+  "data": {
+    "timepoint_id": "550e8400-...",
+    "status": "save_failed",
+    "saved": false
+  }
+}
+```
+
+---
+
+## Performance Notes
+
+**Typical timings** (hyper preset with image):
+
+| Phase | Time | Steps |
+|-------|------|-------|
+| Validation | ~3s | judge, timeline |
+| Scene setup | ~8s | scene, characters |
+| Dialog | ~12s | moment, camera, dialog |
+| Image | ~30s | image_prompt, image_generation |
+| **Total** | **~55s** | |
+
+**Without image:** ~25-30s total (image generation is the slowest step).
+
+---
+
+## iOS Alternative
+
+iOS `URLSession` doesn't support SSE natively. Use one of these instead:
+
+1. **Recommended:** `POST /timepoints/generate/sync` — blocks until complete (set generous timeout)
+2. **Alternative:** `POST /timepoints/generate` + poll `GET /timepoints/{id}` every 3-5s
+3. **Third-party SSE:** [LDSwiftEventSource](https://github.com/launchdarkly/swift-eventsource)
+
+See the [iOS Client guide](/api/ios-client) for details.
+
+---
+
+## Related Endpoints
+
+- [Generation (sync)](/api/generation#post-apiv1timepointsgeneratesync) — Blocking generation
+- [Generation (async)](/api/generation#post-apiv1timepointsgenerate) — Background generation with polling
+- [Error Handling](/api/error-handling) — HTTP error codes
+- [iOS Client](/api/ios-client) — iOS integration guide

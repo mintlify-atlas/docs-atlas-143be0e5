@@ -1,0 +1,305 @@
+---
+title: 'Authentication'
+description: 'Apple Sign-In, token refresh, user profile, and account management'
+---
+
+Auth endpoints are always available but only functional when `AUTH_ENABLED=true`.
+
+<Note>
+All generation, chat, dialog, survey, and temporal endpoints require Bearer JWT when `AUTH_ENABLED=true` and deduct credits.
+</Note>
+
+## POST /api/v1/auth/apple
+
+Verify Apple identity token and return JWT pair. Creates new user on first sign-in.
+
+### Request Body
+
+<ParamField body="identity_token" type="string" required>
+  Apple Sign-In identity token (JWT from Apple)
+</ParamField>
+
+### Response
+
+<ResponseField name="access_token" type="string">
+  JWT access token for API requests
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Refresh token for rotating access token
+</ResponseField>
+
+<ResponseField name="token_type" type="string">
+  Always `"bearer"`
+</ResponseField>
+
+<ResponseField name="expires_in" type="integer">
+  Access token lifetime in seconds (default 900 = 15 minutes)
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/apple \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identity_token": "eyJhbGciOiJSUzI1NiIs..."
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "abc123def456...",
+  "token_type": "bearer",
+  "expires_in": 900
+}
+```
+
+<Note>
+**First sign-in:** Creates user + credit account and grants signup credits (default 50).
+</Note>
+
+---
+
+## POST /api/v1/auth/dev/token
+
+**Admin only.** Create a test user (or find existing by email) and return JWT pair.
+
+### Authentication
+
+Requires `X-Admin-Key` header matching `ADMIN_API_KEY` env var.
+
+### Request Body
+
+<ParamField body="email" type="string" required>
+  Email for test user
+</ParamField>
+
+<ParamField body="display_name" type="string">
+  Optional display name
+</ParamField>
+
+### Response
+
+Same as `/auth/apple`.
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/dev/token \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: your-admin-key" \
+  -d '{
+    "email": "test@example.com",
+    "display_name": "Test User"
+  }'
+```
+
+<Warning>
+Returns 403 if `X-Admin-Key` is missing, wrong, or `ADMIN_API_KEY` is not set.
+</Warning>
+
+---
+
+## POST /api/v1/auth/demo
+
+**Public demo sign-in** for App Store reviewers and simulator testing. No authentication required.
+
+### Rate Limit
+
+10 requests per minute per IP.
+
+### Request Body
+
+None.
+
+### Response
+
+Same as `/auth/apple` — returns JWT pair for fixed demo account.
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/demo
+```
+
+---
+
+## POST /api/v1/auth/refresh
+
+Rotate refresh token and return new JWT pair. The old refresh token is revoked.
+
+### Request Body
+
+<ParamField body="refresh_token" type="string" required>
+  Current refresh token
+</ParamField>
+
+### Response
+
+Same as `/auth/apple` with new `access_token` and `refresh_token`.
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "abc123def456..."
+  }'
+```
+
+### Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 200 | Success |
+| 401 | Invalid or expired refresh token |
+
+---
+
+## GET /api/v1/auth/me
+
+Return the current user's profile.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Response
+
+<ResponseField name="id" type="string">
+  User UUID
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  User email (null if not verified)
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  Display name
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+<ResponseField name="last_login_at" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Account status
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "display_name": null,
+  "created_at": "2026-02-09T12:00:00Z",
+  "last_login_at": "2026-03-06T08:30:00Z",
+  "is_active": true
+}
+```
+
+---
+
+## POST /api/v1/auth/logout
+
+Revoke a refresh token (logout). Always returns 200.
+
+### Request Body
+
+<ParamField body="refresh_token" type="string" required>
+  Refresh token to revoke
+</ParamField>
+
+### Response
+
+```json
+{"detail": "Logged out"}
+```
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/logout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "abc123def456..."
+  }'
+```
+
+<Note>
+Returns 200 even if token doesn't exist (prevents token-existence oracle).
+</Note>
+
+---
+
+## DELETE /api/v1/auth/account
+
+**App Store requirement.** Soft-delete user account. Sets `is_active=false` and revokes all refresh tokens.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Response
+
+```json
+{"detail": "Account deactivated"}
+```
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/auth/account \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+<Warning>
+**Soft delete only.** Does NOT hard-delete data to preserve ledger integrity.
+</Warning>
+
+---
+
+## Service-to-Service Auth
+
+Flash supports service-key authentication for calls from other TIMEPOINT services (billing, clockchain).
+
+### Header: X-Service-Key
+
+Provide `X-Service-Key: {FLASH_SERVICE_KEY}` header for service-to-service requests.
+
+### Auth Priority
+
+| Priority | Headers | Behavior | Use Case |
+|----------|---------|----------|----------|
+| 1 | `X-Service-Key` + `X-User-ID` | Validates key, looks up user by UUID or `external_id` | Billing relays user requests (credits deducted) |
+| 2 | `X-Service-Key` only | Validates key, returns no user context | Clockchain system calls (unmetered) |
+| 3 | `Authorization: Bearer <JWT>` | Validates JWT, returns authenticated user | Direct user auth (iOS app) |
+
+<Note>
+When `AUTH_ENABLED=false` and no service key is provided, all endpoints are open-access.
+</Note>
+
+---
+
+## Admin Operations
+
+Admin endpoints (credit grants, dev tokens) use a separate `X-Admin-Key` header matching `ADMIN_API_KEY`.
+
+See [Credits - Admin Grant](/api/credits#post-apiv1creditsadmingrant) for details.

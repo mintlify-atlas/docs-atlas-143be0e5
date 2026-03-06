@@ -1,0 +1,262 @@
+---
+title: 'Temporal Navigation'
+description: 'Jump forward and backward through time'
+---
+
+Temporal endpoints allow you to navigate through time from existing timepoints, preserving character and scene context.
+
+<Note>
+When `AUTH_ENABLED=true`, temporal jumps require Bearer JWT and deduct 2 credits.
+</Note>
+
+## POST /api/v1/temporal/{timepoint_id}/next
+
+Generate the next temporal moment, stepping forward in time.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts 2 credits.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Source timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="units" type="integer" default="1">
+  Number of time units to step (1-365)
+</ParamField>
+
+<ParamField body="unit" type="string" default="day">
+  Time unit: `second`, `minute`, `hour`, `day`, `week`, `month`, `year`
+</ParamField>
+
+### Response
+
+<ResponseField name="source_id" type="string">
+  Source timepoint UUID
+</ResponseField>
+
+<ResponseField name="target_id" type="string">
+  New timepoint UUID
+</ResponseField>
+
+<ResponseField name="source_year" type="integer">
+  Source year
+</ResponseField>
+
+<ResponseField name="target_year" type="integer">
+  Target year
+</ResponseField>
+
+<ResponseField name="direction" type="string">
+  Always `"next"`
+</ResponseField>
+
+<ResponseField name="units" type="integer">
+  Units stepped
+</ResponseField>
+
+<ResponseField name="unit" type="string">
+  Unit type
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/next \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "units": 1,
+    "unit": "hour"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "source_id": "550e8400-e29b-41d4-a716-446655440000",
+  "target_id": "661f9511-f3ba-42e3-b9d2-557766440000",
+  "source_year": 1945,
+  "target_year": 1945,
+  "direction": "next",
+  "units": 1,
+  "unit": "hour",
+  "message": "Generated moment 1 hour(s) forward"
+}
+```
+
+<Tip>
+Use `GET /api/v1/timepoints/{target_id}?full=true` to retrieve the generated scene.
+</Tip>
+
+---
+
+## POST /api/v1/temporal/{timepoint_id}/prior
+
+Generate the prior temporal moment, stepping backward in time.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts 2 credits.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Source timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="units" type="integer" default="1">
+  Number of time units to step backward (1-365)
+</ParamField>
+
+<ParamField body="unit" type="string" default="day">
+  Time unit: `second`, `minute`, `hour`, `day`, `week`, `month`, `year`
+</ParamField>
+
+### Response
+
+Same as `/next`, but with `"direction": "prior"`.
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/prior \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "units": 2,
+    "unit": "day"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "source_id": "550e8400-e29b-41d4-a716-446655440000",
+  "target_id": "771f9622-g4cb-53f4-c0e3-668877550000",
+  "source_year": 1945,
+  "target_year": 1945,
+  "direction": "prior",
+  "units": 2,
+  "unit": "day",
+  "message": "Generated moment 2 day(s) backward"
+}
+```
+
+---
+
+## GET /api/v1/temporal/{timepoint_id}/sequence
+
+Get all linked scenes (prior and next timepoints in the sequence).
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Center timepoint UUID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="direction" type="string" default="both">
+  Which direction to fetch: `prior`, `next`, or `both`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="10">
+  Maximum timepoints to return per direction (1-50)
+</ParamField>
+
+### Response
+
+<ResponseField name="center" type="object">
+  Center timepoint with `id`, `year`, `slug`
+</ResponseField>
+
+<ResponseField name="prior" type="array">
+  Prior timepoints (ordered oldest to newest)
+</ResponseField>
+
+<ResponseField name="next" type="array">
+  Next timepoints (ordered chronologically)
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/sequence?direction=both&limit=5
+```
+
+**Response:**
+
+```json
+{
+  "center": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "year": 1776,
+    "slug": "declaration-signing-abc123"
+  },
+  "prior": [
+    {
+      "id": "440d7300-d18a-31c3-a605-335544330000",
+      "year": 1776,
+      "slug": "one-day-before-declaration-xyz789"
+    }
+  ],
+  "next": [
+    {
+      "id": "661f9511-f3ba-42e3-b9d2-557766440000",
+      "year": 1776,
+      "slug": "one-hour-after-declaration-def456"
+    }
+  ]
+}
+```
+
+<Note>
+**Multiple children:** When a timepoint has multiple children from separate time-jumps, the most recently created child is followed.
+</Note>
+
+---
+
+## How Temporal Navigation Works
+
+1. **Calculate Target:** Uses the source timepoint's temporal coordinates (year, month, day, time_of_day) and calculates the target point based on the step size.
+
+2. **Generate Context-Aware Scene:** Builds a query like `"The same scene at [location], [year], continuing from the previous moment"` to preserve continuity.
+
+3. **Link Timepoints:** Assigns `parent_id` to create a traversable sequence. Both source and target get the same `sequence_id` for batch retrieval.
+
+4. **Preserve Context:** Time of day and season carry forward unless the step size crosses a boundary (e.g., stepping 1 year changes season).
+
+### Time Unit Calculations
+
+| Unit | Calculation |
+|------|-------------|
+| `second` | Adjusts time_of_day within same day |
+| `minute` | Adjusts time_of_day within same day |
+| `hour` | Adjusts time_of_day within same day |
+| `day` | Increments day, adjusts month/year if needed |
+| `week` | Adds 7 days |
+| `month` | Increments month, adjusts year if needed |
+| `year` | Increments year, preserves month/day |
+
+---
+
+## Credit Cost
+
+| Operation | Cost |
+|-----------|------|
+| `temporal_jump` (next or prior) | 2 credits |
+
+See [Credits](/api/credits) for balance and history.

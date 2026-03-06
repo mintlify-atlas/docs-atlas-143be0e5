@@ -1,0 +1,398 @@
+---
+title: 'Interaction Endpoints'
+description: 'Chat with characters, extend dialog, and survey scenes'
+---
+
+Interaction endpoints allow you to chat with historical characters, generate additional dialog, and survey all characters with questions.
+
+<Note>
+**Visibility check:** All interaction endpoints check timepoint visibility. Private timepoints return 403 for non-owners.
+
+When `AUTH_ENABLED=true`, interactions require a Bearer JWT and deduct credits.
+</Note>
+
+## POST /api/v1/interactions/{timepoint_id}/chat
+
+Chat with a character from the scene.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts 1 credit per message.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="character" type="string" required>
+  Character name (case-insensitive)
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Your message to the character
+</ParamField>
+
+<ParamField body="session_id" type="string">
+  Session ID to continue existing conversation
+</ParamField>
+
+<ParamField body="save_session" type="boolean" default="false">
+  Whether to persist session to database
+</ParamField>
+
+<ParamField body="model" type="string">
+  Model override (e.g. `"gemini-2.5-flash"`, `"google/gemini-2.0-flash-001"`)
+</ParamField>
+
+<ParamField body="response_format" type="string" default="auto">
+  Response format: `structured` (JSON), `text` (plain), `auto` (detect)
+</ParamField>
+
+### Response
+
+<ResponseField name="character_name" type="string">
+  Name of responding character
+</ResponseField>
+
+<ResponseField name="response" type="string">
+  Character's in-character response
+</ResponseField>
+
+<ResponseField name="session_id" type="string">
+  Session ID for continuation
+</ResponseField>
+
+<ResponseField name="emotional_tone" type="string">
+  Detected emotional tone
+</ResponseField>
+
+<ResponseField name="latency_ms" type="integer">
+  Response time in milliseconds
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/interactions/abc123/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "character": "Oppenheimer",
+    "message": "What did you feel when the sky turned white?"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "character_name": "J. Robert Oppenheimer",
+  "response": "A mixture of dread and awe. I remembered the line from the Bhagavad Gita... 'Now I am become Death, the destroyer of worlds.'",
+  "session_id": "sess_abc123",
+  "emotional_tone": "somber",
+  "latency_ms": 1200
+}
+```
+
+---
+
+## POST /api/v1/interactions/{timepoint_id}/chat/stream
+
+Stream chat response token-by-token via Server-Sent Events.
+
+### Request Body
+
+Same as `/chat` endpoint.
+
+### Response (SSE Stream)
+
+Returns SSE events with tokens:
+
+```
+data: {"event": "token", "data": "A ", "character_name": "Oppenheimer"}
+data: {"event": "token", "data": "mixture ", "character_name": "Oppenheimer"}
+data: {"event": "done", "data": "<full response>", "character_name": "Oppenheimer"}
+```
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/interactions/abc123/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "character": "Benjamin Franklin",
+    "message": "What do you think of this document?"
+  }'
+```
+
+---
+
+## POST /api/v1/interactions/{timepoint_id}/dialog
+
+Generate additional dialog lines for the scene.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts 1 credit.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="characters" type="array" default="all">
+  Character names to include, or `"all"` for everyone
+</ParamField>
+
+<ParamField body="num_lines" type="integer" default="5">
+  Number of dialog lines to generate (1-10)
+</ParamField>
+
+<ParamField body="prompt" type="string">
+  Optional direction/scenario for the dialog
+</ParamField>
+
+<ParamField body="sequential" type="boolean" default="true">
+  Use sequential roleplay generation (more authentic)
+</ParamField>
+
+<ParamField body="model" type="string">
+  Model override
+</ParamField>
+
+<ParamField body="response_format" type="string" default="auto">
+  Response format preference
+</ParamField>
+
+### Response
+
+<ResponseField name="dialog" type="array">
+  Array of dialog lines with `speaker` and `text`
+</ResponseField>
+
+<ResponseField name="context" type="string">
+  Description of what happened
+</ResponseField>
+
+<ResponseField name="characters_involved" type="array">
+  Character names who spoke
+</ResponseField>
+
+<ResponseField name="latency_ms" type="integer">
+  Generation time
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/interactions/abc123/dialog \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "characters": ["Benjamin Franklin", "John Adams"],
+    "num_lines": 5,
+    "prompt": "They begin discussing the wording of the document"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "dialog": [
+    {"speaker": "Benjamin Franklin", "text": "The phrase 'unalienable rights' has a certain ring to it."},
+    {"speaker": "John Adams", "text": "Indeed. It strikes at the heart of tyranny."}
+  ],
+  "context": "Franklin and Adams debate constitutional language",
+  "characters_involved": ["Benjamin Franklin", "John Adams"],
+  "latency_ms": 3400
+}
+```
+
+---
+
+## POST /api/v1/interactions/{timepoint_id}/dialog/stream
+
+Stream dialog generation line by line via SSE.
+
+### Request Body
+
+Same as `/dialog` endpoint.
+
+### Response (SSE Stream)
+
+```
+data: {"event": "line", "data": {"speaker": "Franklin", "text": "..."}}
+data: {"event": "line", "data": {"speaker": "Adams", "text": "..."}}
+data: {"event": "done", "data": {"characters_involved": [...]}}
+```
+
+---
+
+## POST /api/v1/interactions/{timepoint_id}/survey
+
+Ask all characters the same question(s) and get structured responses.
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Deducts 1 credit.
+
+### Path Parameters
+
+<ParamField path="timepoint_id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="characters" type="array" default="all">
+  Character names to survey, or `"all"`
+</ParamField>
+
+<ParamField body="questions" type="array" required>
+  Questions to ask each character
+</ParamField>
+
+<ParamField body="mode" type="string" default="parallel">
+  Execution mode: `parallel` or `sequential`
+</ParamField>
+
+<ParamField body="chain_prompts" type="boolean" default="false">
+  In sequential mode, share prior answers
+</ParamField>
+
+<ParamField body="include_summary" type="boolean" default="true">
+  Generate summary of responses
+</ParamField>
+
+<ParamField body="model" type="string">
+  Model override
+</ParamField>
+
+### Response
+
+<ResponseField name="timepoint_id" type="string">
+  Associated timepoint
+</ResponseField>
+
+<ResponseField name="questions" type="array">
+  Questions asked
+</ResponseField>
+
+<ResponseField name="responses" type="array">
+  All character responses with sentiment analysis
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  Summary of responses
+</ResponseField>
+
+<ResponseField name="mode" type="string">
+  Execution mode used
+</ResponseField>
+
+<ResponseField name="total_characters" type="integer">
+  Number surveyed
+</ResponseField>
+
+<ResponseField name="latency_ms" type="integer">
+  Total time
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/interactions/abc123/survey \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "questions": ["What do you fear most about this moment?"],
+    "include_summary": true
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "timepoint_id": "abc123",
+  "questions": ["What do you fear most about this moment?"],
+  "responses": [
+    {
+      "character_name": "John Adams",
+      "question": "What do you fear most about this moment?",
+      "response": "That we shall all hang for this...",
+      "sentiment": "negative",
+      "key_points": ["fear of execution", "consequences"],
+      "emotional_tone": "anxious"
+    }
+  ],
+  "summary": "The founders express a mixture of fear and determination...",
+  "mode": "parallel",
+  "total_characters": 5,
+  "latency_ms": 2100
+}
+```
+
+---
+
+## POST /api/v1/interactions/{timepoint_id}/survey/stream
+
+Stream survey results as each character responds (SSE).
+
+### Request Body
+
+Same as `/survey` endpoint.
+
+---
+
+## GET /api/v1/interactions/sessions/{timepoint_id}
+
+List chat sessions for a timepoint.
+
+### Response
+
+<ResponseField name="sessions" type="array">
+  Array of session summaries
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total session count
+</ResponseField>
+
+---
+
+## GET /api/v1/interactions/session/{session_id}
+
+Get a chat session by ID with full message history.
+
+### Path Parameters
+
+<ParamField path="session_id" type="string" required>
+  Session UUID
+</ParamField>
+
+---
+
+## DELETE /api/v1/interactions/session/{session_id}
+
+Delete a chat session.
+
+### Path Parameters
+
+<ParamField path="session_id" type="string" required>
+  Session UUID
+</ParamField>
+
+### Response
+
+```json
+{"deleted": true, "session_id": "sess_abc123"}
+```

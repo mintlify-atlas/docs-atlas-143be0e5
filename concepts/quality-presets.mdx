@@ -1,0 +1,424 @@
+---
+title: 'Quality Presets'
+description: 'Configure speed vs quality tradeoffs with verified model combinations'
+---
+
+TIMEPOINT Flash provides **four quality presets** that control the speed/quality tradeoff by selecting different model combinations and parallelism strategies.
+
+## The Four Presets
+
+<CardGroup cols={2}>
+  <Card title="HD" icon="star">
+    **Highest Quality**
+    
+    Gemini 2.5 Flash + Nano Banana Pro (2K images)
+    
+    ~120-150 seconds
+  </Card>
+  
+  <Card title="HYPER" icon="bolt">
+    **Fastest Speed**
+    
+    Gemini 2.0 Flash via OpenRouter
+    
+    ~45-75 seconds
+  </Card>
+  
+  <Card title="BALANCED" icon="sliders">
+    **Default Balance**
+    
+    Gemini 2.5 Flash (Google native)
+    
+    ~90-120 seconds
+  </Card>
+  
+  <Card title="GEMINI3" icon="sparkles">
+    **Thinking Model**
+    
+    Gemini 3 Flash Preview (agentic workflows)
+    
+    ~75-110 seconds
+  </Card>
+</CardGroup>
+
+## Preset Comparison
+
+| Preset | Text Model | Image Model | Parallelism | Speed | Quality | Best For |
+|--------|-----------|-------------|-------------|-------|---------|----------|
+| **HD** | gemini-2.5-flash | gemini-3-pro-image-preview (2K) | NORMAL (3) | Slowest | Highest | Production, final renders |
+| **HYPER** | google/gemini-2.0-flash-001 | gemini-2.5-flash-image | MAX (8) | Fastest | Good | Development, rapid iteration |
+| **BALANCED** | gemini-2.5-flash | gemini-2.5-flash-image | NORMAL (3) | Moderate | High | Default, most use cases |
+| **GEMINI3** | google/gemini-3-flash-preview | gemini-2.5-flash-image | AGGRESSIVE (5) | Fast | Excellent | Complex reasoning, agentic tasks |
+
+## Detailed Preset Configurations
+
+<AccordionGroup>
+<Accordion title="HD Preset" icon="star">
+### HD: Highest Quality
+
+**Focus:** Maximum quality with Gemini 2.5 Flash + Nano Banana Pro
+
+```python
+QualityPreset.HD: {
+    "name": "HD Quality",
+    "text_model": "gemini-2.5-flash",         # Google native
+    "judge_model": "gemini-2.5-flash",
+    "image_model": "gemini-3-pro-image-preview",  # Nano Banana Pro - 2K/4K
+    "image_provider": ProviderType.GOOGLE,
+    "text_provider": ProviderType.GOOGLE,
+    "max_tokens": 8192,
+    "thinking_level": "high",  # Extended thinking
+    "image_size": "2K",        # 2048x2048 support
+    "parallelism_mode": ParallelismMode.NORMAL,  # 3 concurrent
+}
+```
+
+**Location:** `app/config.py:149`
+
+#### Characteristics
+- **Text Generation:** Google native Gemini 2.5 Flash with extended thinking
+- **Image Generation:** Nano Banana Pro (2K resolution, best quality)
+- **Parallelism:** NORMAL mode (3 concurrent calls)
+- **Latency:** ~120-150 seconds per timepoint
+- **Cost:** Highest (premium models)
+
+#### When to Use
+- Production deployments
+- Final renders for publishing
+- When quality matters more than speed
+- Client-facing applications
+
+#### Model Details
+- **Gemini 2.5 Flash:** Latest Google model with improved reasoning
+- **Nano Banana Pro:** Supports 1K, 2K, and 4K image generation
+- **Thinking Level:** High (extended reasoning for better quality)
+</Accordion>
+
+<Accordion title="HYPER Preset" icon="bolt">
+### HYPER: Fastest Speed
+
+**Focus:** Maximum speed with Gemini 2.0 Flash via OpenRouter
+
+```python
+QualityPreset.HYPER: {
+    "name": "Hyper Speed",
+    "text_model": "google/gemini-2.0-flash-001",  # OpenRouter
+    "judge_model": "google/gemini-2.0-flash-001",
+    "image_model": "gemini-2.5-flash-image",      # Google native
+    "image_provider": ProviderType.GOOGLE,
+    "text_provider": ProviderType.OPENROUTER,
+    "max_tokens": 1024,
+    "thinking_level": None,  # No extended thinking
+    "parallelism_mode": ParallelismMode.MAX,  # 8 concurrent
+}
+```
+
+**Location:** `app/config.py:162`
+
+#### Characteristics
+- **Text Generation:** Gemini 2.0 Flash via OpenRouter (faster routing)
+- **Image Generation:** Nano Banana (1K resolution, fast)
+- **Parallelism:** MAX mode (up to 8 concurrent calls)
+- **Latency:** ~45-75 seconds per timepoint
+- **Cost:** Lower (older model via OpenRouter)
+
+#### When to Use
+- Development and testing
+- Rapid iteration
+- High-volume generation
+- When speed is critical
+
+#### Optimizations
+- Uses OpenRouter's optimized routing
+- Maximum parallelism (8 concurrent for Google native tier)
+- No extended thinking (faster responses)
+- Reduced max_tokens (1024 vs 8192)
+</Accordion>
+
+<Accordion title="BALANCED Preset" icon="sliders">
+### BALANCED: Default Balance
+
+**Focus:** Optimal balance of speed and quality
+
+```python
+QualityPreset.BALANCED: {
+    "name": "Balanced",
+    "text_model": "gemini-2.5-flash",       # Google native
+    "judge_model": "gemini-2.5-flash",
+    "image_model": "gemini-2.5-flash-image",  # Nano Banana
+    "image_provider": ProviderType.GOOGLE,
+    "text_provider": ProviderType.GOOGLE,
+    "max_tokens": 2048,
+    "thinking_level": "medium",
+    "parallelism_mode": ParallelismMode.NORMAL,  # 3 concurrent
+}
+```
+
+**Location:** `app/config.py:175`
+
+#### Characteristics
+- **Text Generation:** Google native Gemini 2.5 Flash with medium thinking
+- **Image Generation:** Nano Banana (1K resolution, fast)
+- **Parallelism:** NORMAL mode (3 concurrent calls)
+- **Latency:** ~90-120 seconds per timepoint
+- **Cost:** Moderate
+
+#### When to Use
+- Default for most applications
+- Good balance of speed and quality
+- General-purpose timepoint generation
+- When unsure which preset to use
+
+#### Why It's the Default
+- Uses latest Gemini 2.5 Flash (better than 2.0)
+- Medium thinking level (good quality without slowdown)
+- Google native (better reliability than OpenRouter)
+- NORMAL parallelism (safe concurrency)
+</Accordion>
+
+<Accordion title="GEMINI3 Preset" icon="sparkles">
+### GEMINI3: Thinking Model
+
+**Focus:** Latest Gemini 3 Flash for complex reasoning
+
+```python
+QualityPreset.GEMINI3: {
+    "name": "Gemini 3 Flash",
+    "text_model": "google/gemini-3-flash-preview",  # OpenRouter
+    "judge_model": "google/gemini-3-flash-preview",
+    "image_model": "gemini-2.5-flash-image",        # Google native
+    "image_provider": ProviderType.GOOGLE,
+    "text_provider": ProviderType.OPENROUTER,
+    "max_tokens": 4096,
+    "thinking_level": "medium",  # Supports configurable thinking
+    "parallelism_mode": ParallelismMode.AGGRESSIVE,  # 5 concurrent
+}
+```
+
+**Location:** `app/config.py:187`
+
+#### Characteristics
+- **Text Generation:** Gemini 3 Flash Preview (latest thinking model)
+- **Image Generation:** Nano Banana (1K resolution)
+- **Parallelism:** AGGRESSIVE mode (5 concurrent calls)
+- **Latency:** ~75-110 seconds per timepoint
+- **Cost:** Moderate to high
+
+#### When to Use
+- Complex agentic workflows
+- Advanced reasoning tasks
+- Multi-step problem solving
+- When you need the latest model
+
+#### Gemini 3 Advantages
+- **Thinking capability:** Extended reasoning for better quality
+- **Agentic workflows:** Better at multi-step tasks
+- **Latest features:** Preview access to new capabilities
+</Accordion>
+</AccordionGroup>
+
+## Verified Models Only
+
+All presets use **verified working models** from `VerifiedModels` class:
+
+```python
+class VerifiedModels:
+    """Verified working models for each provider.
+    
+    IMPORTANT: Only models in these lists are guaranteed to work.
+    Using unverified models will result in failures.
+    """
+    
+    # Google Native API
+    GOOGLE_TEXT = [
+        "gemini-2.5-flash",           # Fast, reliable, supports thinking
+        "gemini-2.0-flash",           # Older but stable
+    ]
+    
+    GOOGLE_IMAGE = [
+        "gemini-2.5-flash-image",       # Nano Banana - fast 1K
+        "gemini-3-pro-image-preview",   # Nano Banana Pro - 2K/4K
+    ]
+    
+    # OpenRouter API
+    OPENROUTER_TEXT = [
+        "google/gemini-2.0-flash-001",        # Fast, handles JSON well
+        "google/gemini-2.0-flash-001:free",   # Free tier (rate limited)
+        "google/gemini-3-flash-preview",      # Latest thinking model
+    ]
+```
+
+**Location:** `app/config.py:82`
+
+<Warning>
+**DO NOT** use models not in the `VerifiedModels` lists. They may fail silently or cause errors.
+</Warning>
+
+## Parallelism Modes
+
+Each preset maps to a parallelism mode that controls concurrent agent execution:
+
+```python
+PRESET_PARALLELISM: dict[QualityPreset, ParallelismMode] = {
+    QualityPreset.HD: ParallelismMode.NORMAL,       # Quality focus, standard parallelism
+    QualityPreset.BALANCED: ParallelismMode.NORMAL, # Default behavior
+    QualityPreset.HYPER: ParallelismMode.MAX,       # Speed focus, maximum parallelism
+    QualityPreset.GEMINI3: ParallelismMode.AGGRESSIVE,  # Thinking model, moderate parallelism
+}
+```
+
+**Location:** `app/config.py:206`
+
+See [Pipeline Execution](/concepts/pipeline#parallel-execution-modes) for details on parallelism modes.
+
+## Tier-Based Parallelism
+
+Parallelism limits depend on both **preset mode** and **model tier**:
+
+| Model Tier | SEQUENTIAL | NORMAL | AGGRESSIVE | MAX |
+|------------|------------|--------|------------|-----|
+| **FREE** (OpenRouter free) | 1 | 1 | 2 | 2 |
+| **PAID** (OpenRouter paid) | 1 | 3 | 5 | 6 |
+| **NATIVE** (Google API key) | 1 | 3 | 5 | 8 |
+
+**Location:** `app/config.py:227`
+
+### Example Combinations
+
+- **HD preset + Google API key** → NORMAL mode → 3 concurrent calls
+- **HYPER preset + Google API key** → MAX mode → 8 concurrent calls
+- **BALANCED preset + OpenRouter paid** → NORMAL mode → 3 concurrent calls
+- **GEMINI3 preset + OpenRouter paid** → AGGRESSIVE mode → 5 concurrent calls
+
+## Usage
+
+<CodeGroup>
+```python Via Preset
+from app.core.pipeline import GenerationPipeline
+from app.config import QualityPreset
+
+# Use HD preset
+pipeline = GenerationPipeline(preset=QualityPreset.HD)
+result = await pipeline.run(query, generate_image=True)
+
+# Use HYPER preset
+pipeline = GenerationPipeline(preset=QualityPreset.HYPER)
+result = await pipeline.run(query, generate_image=True)
+```
+
+```python Via API
+import requests
+
+response = requests.post(
+    "http://localhost:8000/v1/timepoints",
+    json={
+        "query": "Oppenheimer watches Trinity test",
+        "preset": "hd",  # or "hyper", "balanced", "gemini3"
+        "generate_image": true
+    }
+)
+```
+
+```python Custom Models (Override Preset)
+# Override preset with custom models
+pipeline = GenerationPipeline(
+    preset=QualityPreset.BALANCED,  # Base preset
+    text_model="google/gemini-3-flash-preview",  # Override text
+    image_model="gemini-3-pro-image-preview"     # Override image
+)
+```
+
+```python Custom Parallelism
+# Override parallelism limit
+pipeline = GenerationPipeline(
+    preset=QualityPreset.HYPER,
+    max_parallelism=4  # Limit to 4 concurrent (instead of 8)
+)
+```
+</CodeGroup>
+
+## Performance Benchmarks
+
+Average generation times (with image, Google native tier):
+
+| Preset | Min | Avg | Max | Parallelism |
+|--------|-----|-----|-----|-------------|
+| **HD** | 100s | 135s | 180s | 3 concurrent |
+| **HYPER** | 40s | 60s | 90s | 8 concurrent |
+| **BALANCED** | 80s | 105s | 140s | 3 concurrent |
+| **GEMINI3** | 65s | 90s | 125s | 5 concurrent |
+
+<Note>
+Times vary based on query complexity, character count, and network latency. Image generation adds ~15-25 seconds.
+</Note>
+
+## Environment Variables
+
+Presets are configured in `app/config.py:148` but can be overridden via environment variables:
+
+```bash
+# Provider API keys
+GOOGLE_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
+
+# Model overrides (optional)
+JUDGE_MODEL=gemini-2.5-flash
+CREATIVE_MODEL=gemini-2.5-flash
+IMAGE_MODEL=gemini-2.5-flash-image
+
+# Parallelism override (optional)
+PIPELINE_MAX_PARALLELISM=3
+```
+
+## Validation
+
+Presets are validated at startup to ensure all models are verified:
+
+```python
+from app.config import validate_presets_or_raise
+
+# Validate all presets use verified models
+validate_presets_or_raise()
+# Raises ValueError if any preset uses unverified models
+```
+
+**Location:** `app/config.py:636`
+
+## Choosing the Right Preset
+
+<Steps>
+  <Step title="Start with BALANCED">
+    Use the default BALANCED preset for most applications. It provides the best overall experience.
+  </Step>
+  
+  <Step title="Optimize for your use case">
+    - **Need speed?** → Switch to HYPER
+    - **Need quality?** → Switch to HD
+    - **Need reasoning?** → Switch to GEMINI3
+  </Step>
+  
+  <Step title="Monitor performance">
+    Track generation times and quality. Adjust preset based on your requirements.
+  </Step>
+  
+  <Step title="Consider costs">
+    HD and GEMINI3 use premium models (higher cost). HYPER uses older models (lower cost).
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Pipeline Execution" icon="diagram-next" href="/concepts/pipeline">
+    See how presets affect pipeline execution
+  </Card>
+  <Card title="Agents" icon="robot" href="/concepts/agents">
+    Learn about the 15 specialized agents
+  </Card>
+  <Card title="Configuration" icon="gear" href="/quickstart/configuration">
+    Set up API keys and environment variables
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/generation/create">
+    Use presets via the API
+  </Card>
+</CardGroup>

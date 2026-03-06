@@ -1,0 +1,908 @@
+---
+title: "iOS Client Guide"
+description: "Complete iOS integration reference: credentials, auth flow, endpoint map, and client conventions"
+---
+
+## Overview
+
+This guide covers everything you need to integrate TIMEPOINT Flash into an iOS app:
+
+- Credential setup and environment configuration
+- Apple Sign-In → JWT authentication flow
+- Credit system and 402 handling
+- Endpoint map optimized for iOS
+- SSE streaming alternatives
+- Token storage with Keychain
+- Error handling strategies
+
+---
+
+## 1. Credential Inventory
+
+### Required Credentials
+
+| Environment Variable | Required | Purpose |
+|---------------------|----------|----------|
+| `GOOGLE_API_KEY` | Yes (or OpenRouter) | Google Gemini LLM + Imagen image generation |
+| `OPENROUTER_API_KEY` | Optional | OpenRouter multi-model access (hyper/gemini3 presets) |
+| `AUTH_ENABLED` | **Yes** | Set `true` for iOS mode — requires JWT auth |
+| `JWT_SECRET_KEY` | **Yes** | HS256 signing key — **generate 32+ random characters** |
+| `APPLE_BUNDLE_ID` | **Yes** | iOS app bundle ID for Apple Sign-In validation |
+
+### Optional Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `sqlite+aiosqlite:///./timepoint.db` | Database connection string |
+| `JWT_ACCESS_EXPIRE_MINUTES` | `15` | Access token lifetime |
+| `JWT_REFRESH_EXPIRE_DAYS` | `30` | Refresh token lifetime |
+| `SIGNUP_CREDITS` | `50` | Free credits on first sign-in |
+| `ADMIN_API_KEY` | `""` (disabled) | Dev admin endpoints (test users, credit grants) |
+| `ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
+| `DEBUG` | `true` | Enables `/docs` and `/redoc` Swagger UI |
+| `RATE_LIMIT` | `60` | Requests per minute per IP |
+| `SHARE_URL_BASE` | `""` | Base URL for share links (e.g. `https://timepointai.com/t`) |
+
+<Tip>
+**Generate secure secrets:**
+
+```bash
+# JWT_SECRET_KEY (32+ characters)
+openssl rand -base64 32
+
+# ADMIN_API_KEY (for dev testing)
+openssl rand -hex 16
+```
+</Tip>
+
+---
+
+## 2. Auth Flow
+
+### Apple Sign-In → JWT Pair
+
+```
+iOS App                          Backend
+  │                                │
+  │  1. ASAuthorizationAppleIDCredential
+  │     (identity_token)           │
+  │  ──────────────────────────►   │
+  │  POST /api/v1/auth/apple       │
+  │  { "identity_token": "..." }   │
+  │                                │
+  │  ◄──────────────────────────   │
+  │  { access_token,               │
+  │    refresh_token,              │
+  │    token_type: "bearer",       │
+  │    expires_in: 900 }           │
+  │                                │
+  │  2. Use access_token as Bearer │
+  │  ──────────────────────────►   │
+  │  Authorization: Bearer <AT>    │
+  │                                │
+  │  3. When AT expires (15 min)   │
+  │  ──────────────────────────►   │
+  │  POST /api/v1/auth/refresh     │
+  │  { "refresh_token": "..." }    │
+  │                                │
+  │  ◄──────────────────────────   │
+  │  { new access_token,           │
+  │    new refresh_token,          │
+  │    token_type: "bearer",       │
+  │    expires_in: 900 }           │
+```
+
+### Swift Implementation
+
+```swift
+import AuthenticationServices
+
+class AuthManager: NSObject, ASAuthorizationControllerDelegate {
+    func signInWithApple() {
+        let provider = ASAuthorizationAppleIDProvider()
+        let request = provider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+        
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.performRequests()
+    }
+    
+    func authorizationController(controller: ASAuthorizationController, 
+                                 didCompleteWithAuthorization authorization: ASAuthorization) {
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let identityTokenData = credential.identityToken,
+              let identityToken = String(data: identityTokenData, encoding: .utf8) else {
+            return
+        }
+        
+        // Send to backend
+        Task {
+            await authenticateWithBackend(identityToken: identityToken)
+        }
+    }
+    
+    func authenticateWithBackend(identityToken: String) async {
+        let url = URL(string: "https://your-app.railway.app/api/v1/auth/apple")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["identity_token": identityToken]
+        request.httpBody = try? JSONEncoder().encode(body)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw AuthError.invalidResponse
+            }
+            
+            let tokens = try JSONDecoder().decode(TokenResponse.self, from: data)
+            
+            // Store tokens
+            KeychainHelper.saveRefreshToken(tokens.refresh_token)
+            self.accessToken = tokens.access_token
+            
+        } catch {
+            print("Authentication failed: \(error)")
+        }
+    }
+}
+
+struct TokenResponse: Codable {
+    let access_token: String
+    let refresh_token: String
+    let token_type: String
+    let expires_in: Int
+}
+```
+
+### Token Refresh
+
+```swift
+func refreshAccessToken() async throws {
+    guard let refreshToken = KeychainHelper.getRefreshToken() else {
+        throw AuthError.noRefreshToken
+    }
+    
+    let url = URL(string: "https://your-app.railway.app/api/v1/auth/refresh")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    let body = ["refresh_token": refreshToken]
+    request.httpBody = try? JSONEncoder().encode(body)
+    
+    let (data, response) = try await URLSession.shared.data(for: request)
+    
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw AuthError.invalidResponse
+    }
+    
+    if httpResponse.statusCode == 401 {
+        // Refresh token invalid, need to re-authenticate
+        KeychainHelper.deleteRefreshToken()
+        throw AuthError.refreshTokenExpired
+    }
+    
+    let tokens = try JSONDecoder().decode(TokenResponse.self, from: data)
+    
+    // Store new tokens
+    KeychainHelper.saveRefreshToken(tokens.refresh_token)
+    self.accessToken = tokens.access_token
+}
+```
+
+### Logout
+
+```swift
+func logout() async {
+    guard let refreshToken = KeychainHelper.getRefreshToken() else { return }
+    
+    let url = URL(string: "https://your-app.railway.app/api/v1/auth/logout")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    let body = ["refresh_token": refreshToken]
+    request.httpBody = try? JSONEncoder().encode(body)
+    
+    // Always returns 200, don't check response
+    _ = try? await URLSession.shared.data(for: request)
+    
+    // Clear local tokens
+    KeychainHelper.deleteRefreshToken()
+    self.accessToken = nil
+}
+```
+
+---
+
+## 3. Credit System
+
+### Credit Costs
+
+| Operation | Credits |
+|-----------|--------|
+| Scene generation (balanced) | **5** |
+| Scene generation (HD) | **10** |
+| Scene generation (hyper/gemini3) | **5** |
+| Character chat | **1** |
+| Temporal jump | **2** |
+
+Fetch live costs:
+
+```swift
+struct CreditCosts: Codable {
+    let costs: [String: Int]
+}
+
+func fetchCreditCosts() async throws -> CreditCosts {
+    let url = URL(string: "https://your-app.railway.app/api/v1/credits/costs")!
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode(CreditCosts.self, from: data)
+}
+```
+
+### Check Balance
+
+```swift
+struct CreditBalance: Codable {
+    let balance: Int
+    let lifetime_earned: Int
+    let lifetime_spent: Int
+}
+
+func fetchCreditBalance() async throws -> CreditBalance {
+    let url = URL(string: "https://your-app.railway.app/api/v1/credits/balance")!
+    var request = URLRequest(url: url)
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    
+    let (data, _) = try await URLSession.shared.data(for: request)
+    return try JSONDecoder().decode(CreditBalance.self, from: data)
+}
+```
+
+### Handle 402 Payment Required
+
+```swift
+func generateScene(query: String) async throws -> Timepoint {
+    let url = URL(string: "https://your-app.railway.app/api/v1/timepoints/generate/sync")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.timeoutInterval = 120.0  // 2 minutes
+    
+    let body: [String: Any] = [
+        "query": query,
+        "preset": "balanced",
+        "generate_image": true
+    ]
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    
+    let (data, response) = try await URLSession.shared.data(for: request)
+    
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw GenerationError.invalidResponse
+    }
+    
+    if httpResponse.statusCode == 402 {
+        // Insufficient credits
+        let error = try JSONDecoder().decode(ErrorResponse.self, from: data)
+        
+        // Fetch current balance
+        let balance = try await fetchCreditBalance()
+        
+        // Show error to user
+        throw GenerationError.insufficientCredits(
+            message: error.detail,
+            balance: balance.balance
+        )
+    }
+    
+    return try JSONDecoder().decode(Timepoint.self, from: data)
+}
+
+enum GenerationError: LocalizedError {
+    case insufficientCredits(message: String, balance: Int)
+    case invalidResponse
+    
+    var errorDescription: String? {
+        switch self {
+        case .insufficientCredits(let message, let balance):
+            return "\(message)\n\nYour balance: \(balance) credits"
+        case .invalidResponse:
+            return "Invalid server response"
+        }
+    }
+}
+```
+
+---
+
+## 4. Endpoint Map
+
+### Authentication
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/auth/apple` | None | Apple Sign-In → JWT pair |
+| `POST` | `/auth/refresh` | None | Rotate refresh token |
+| `GET` | `/auth/me` | Bearer | Current user profile |
+| `POST` | `/auth/logout` | None | Revoke refresh token |
+| `DELETE` | `/auth/account` | Bearer | **Soft-delete account (required for App Store)** |
+
+### Credits
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/credits/balance` | Bearer | Current balance |
+| `GET` | `/credits/history` | Bearer | Paginated ledger (`?limit=20&offset=0`) |
+| `GET` | `/credits/costs` | None | Cost table |
+
+### Scene Generation
+
+| Method | Path | Auth | Credits | Description |
+|--------|------|------|---------|-------------|
+| `POST` | `/timepoints/generate/sync` | Bearer | 5-10 | **Synchronous (recommended for iOS)** |
+| `POST` | `/timepoints/generate` | Bearer | 5-10 | Background + poll |
+| `POST` | `/timepoints/generate/stream` | Bearer | 5-10 | SSE streaming (see alternatives below) |
+
+### Scene Retrieval
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/timepoints/{id}` | Bearer | Get scene (`?full=true&include_image=false`) |
+| `GET` | `/timepoints` | Bearer | List scenes (paginated, `?visibility=public\|private`) |
+| `PATCH` | `/timepoints/{id}/visibility` | Bearer | Set visibility (owner-only) |
+
+### Character Interactions
+
+| Method | Path | Auth | Credits | Description |
+|--------|------|------|---------|-------------|
+| `POST` | `/interactions/{id}/chat` | Bearer | 1 | Chat with a character |
+| `POST` | `/interactions/{id}/dialog` | Bearer | 1 | Generate more dialog |
+| `POST` | `/interactions/{id}/survey` | Bearer | 1 | Ask all characters |
+
+### Time Travel
+
+| Method | Path | Auth | Credits | Description |
+|--------|------|------|---------|-------------|
+| `POST` | `/temporal/{id}/next` | Bearer | 2 | Jump forward in time |
+| `POST` | `/temporal/{id}/prior` | Bearer | 2 | Jump backward in time |
+| `GET` | `/temporal/{id}/sequence` | Bearer | 0 | Get linked timeline |
+
+### User Data
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/users/me/timepoints` | Bearer | User's scenes (`?page=1&page_size=20&status=completed`) |
+| `GET` | `/users/me/export` | Bearer | Full GDPR data export |
+
+---
+
+## 5. SSE Streaming Alternatives
+
+`URLSession` doesn't natively support Server-Sent Events. Use one of these approaches:
+
+### Option 1: Synchronous Generation (Recommended)
+
+Use `POST /timepoints/generate/sync` with generous timeout:
+
+```swift
+var request = URLRequest(url: url)
+request.timeoutInterval = 120.0  // 2 minutes for full generation
+
+let (data, _) = try await URLSession.shared.data(for: request)
+let timepoint = try JSONDecoder().decode(Timepoint.self, from: data)
+```
+
+**Pros:**
+- Simple implementation
+- No polling logic needed
+- Single request/response
+
+**Cons:**
+- No progress updates
+- Blocks for 30-120 seconds
+
+---
+
+### Option 2: Background Generation + Polling
+
+Use `POST /timepoints/generate` (returns immediately) + poll `GET /timepoints/{id}`:
+
+```swift
+func generateSceneWithPolling(query: String) async throws -> Timepoint {
+    // 1. Start background generation
+    let startUrl = URL(string: "https://your-app.railway.app/api/v1/timepoints/generate")!
+    var startRequest = URLRequest(url: startUrl)
+    startRequest.httpMethod = "POST"
+    startRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    let body: [String: Any] = ["query": query, "preset": "balanced"]
+    startRequest.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    
+    let (startData, _) = try await URLSession.shared.data(for: startRequest)
+    let startResponse = try JSONDecoder().decode(GenerateResponse.self, from: startData)
+    
+    // 2. Poll for completion
+    let timepointId = startResponse.id
+    return try await pollForCompletion(timepointId: timepointId)
+}
+
+func pollForCompletion(timepointId: String) async throws -> Timepoint {
+    let url = URL(string: "https://your-app.railway.app/api/v1/timepoints/\(timepointId)?full=true")!
+    var request = URLRequest(url: url)
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    
+    for attempt in 0..<40 {  // Max 2 minutes (40 * 3 seconds)
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let timepoint = try JSONDecoder().decode(Timepoint.self, from: data)
+        
+        if timepoint.status == "completed" {
+            return timepoint
+        }
+        
+        if timepoint.status == "failed" {
+            throw GenerationError.failed(timepoint.error)
+        }
+        
+        // Wait before next poll
+        try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
+    }
+    
+    throw GenerationError.timeout
+}
+
+struct GenerateResponse: Codable {
+    let id: String
+    let status: String
+    let message: String
+}
+```
+
+**Pros:**
+- Shows progress to user ("Generating...")
+- Can cancel/background the request
+- User can navigate away
+
+**Cons:**
+- More complex
+- Multiple network requests
+- Polling overhead
+
+---
+
+### Option 3: Third-Party SSE Library
+
+Use [LDSwiftEventSource](https://github.com/launchdarkly/swift-eventsource):
+
+```swift
+import LDSwiftEventSource
+
+func generateSceneWithSSE(query: String, onProgress: @escaping (Int) -> Void) async throws -> Timepoint {
+    let url = URL(string: "https://your-app.railway.app/api/v1/timepoints/generate/stream")!
+    var config = EventSource.Config(handler: SSEHandler(onProgress: onProgress), url: url)
+    config.method = "POST"
+    config.body = try? JSONEncoder().encode(["query": query, "preset": "balanced"])
+    config.headers = ["Authorization": "Bearer \(accessToken)"]
+    
+    let eventSource = EventSource(config: config)
+    eventSource.start()
+    
+    // Wait for completion...
+}
+
+class SSEHandler: EventHandler {
+    let onProgress: (Int) -> Void
+    
+    init(onProgress: @escaping (Int) -> Void) {
+        self.onProgress = onProgress
+    }
+    
+    func onMessage(eventType: String, messageEvent: MessageEvent) {
+        guard let data = messageEvent.data.data(using: .utf8),
+              let event = try? JSONDecoder().decode(StreamEvent.self, from: data) else {
+            return
+        }
+        
+        onProgress(event.progress)
+    }
+}
+
+struct StreamEvent: Codable {
+    let event: String
+    let step: String?
+    let progress: Int
+    let data: [String: AnyCodable]?
+}
+```
+
+**Pros:**
+- Real-time progress updates
+- Native SSE protocol
+
+**Cons:**
+- Third-party dependency
+- More complex error handling
+
+---
+
+## 6. Token Storage
+
+### Keychain Helper
+
+```swift
+import Security
+import Foundation
+
+class KeychainHelper {
+    private static let service = "com.yourapp.timepoint"
+    private static let refreshTokenKey = "refresh_token"
+    
+    static func saveRefreshToken(_ token: String) {
+        let data = token.data(using: .utf8)!
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: refreshTokenKey,
+            kSecValueData as String: data
+        ]
+        
+        // Delete existing
+        SecItemDelete(query as CFDictionary)
+        
+        // Add new
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            print("Failed to save refresh token: \(status)")
+            return
+        }
+    }
+    
+    static func getRefreshToken() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: refreshTokenKey,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let token = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        
+        return token
+    }
+    
+    static func deleteRefreshToken() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: refreshTokenKey
+        ]
+        
+        SecItemDelete(query as CFDictionary)
+    }
+}
+```
+
+**Storage strategy:**
+
+| Token | Storage | Rationale |
+|-------|---------|----------|
+| **Refresh token** | Keychain (`kSecClassGenericPassword`) | Survives app restarts, encrypted at rest |
+| **Access token** | In-memory property | Short-lived (15 min), re-derived from refresh on launch |
+
+**On app launch:**
+
+```swift
+func initializeAuth() async {
+    guard let refreshToken = KeychainHelper.getRefreshToken() else {
+        // No refresh token, show sign-in
+        navigateToSignIn()
+        return
+    }
+    
+    do {
+        try await refreshAccessToken()
+        // Access token refreshed, proceed
+    } catch {
+        // Refresh failed, show sign-in
+        KeychainHelper.deleteRefreshToken()
+        navigateToSignIn()
+    }
+}
+```
+
+---
+
+## 7. Error Handling
+
+### Error Code Reference
+
+| HTTP Code | Meaning | iOS Action |
+|-----------|---------|------------|
+| **401** | Token expired or invalid | Try refresh; if fails, re-authenticate |
+| **402** | Insufficient credits | Show balance, explain cost, prompt top-up |
+| **403** | Private timepoint (non-owner) | Show "This scene is private" |
+| **404** | Resource not found | Show empty state |
+| **422** | Validation error | Show field errors to user |
+| **429** | Rate limited | Exponential backoff (1s → 2s → 4s → max 30s) |
+| **500** | Server error | Retry once after 2-5s, then show error |
+
+### Swift Error Enum
+
+```swift
+enum APIError: LocalizedError {
+    case unauthorized
+    case insufficientCredits(balance: Int, cost: Int)
+    case forbidden(message: String)
+    case notFound
+    case validationError([String])
+    case rateLimited(retryAfter: Int)
+    case serverError(detail: String?)
+    
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:
+            return "Your session has expired. Please sign in again."
+        case .insufficientCredits(let balance, let cost):
+            return "Insufficient credits. This costs \(cost) credits, but you have \(balance)."
+        case .forbidden(let message):
+            return message
+        case .notFound:
+            return "The requested resource was not found."
+        case .validationError(let errors):
+            return errors.joined(separator: "\n")
+        case .rateLimited(let seconds):
+            return "Rate limit exceeded. Try again in \(seconds) seconds."
+        case .serverError(let detail):
+            return detail ?? "An unexpected error occurred. Please try again."
+        }
+    }
+}
+```
+
+### Generic Request Handler
+
+```swift
+func makeAuthenticatedRequest<T: Decodable>(
+    url: URL,
+    method: String = "GET",
+    body: [String: Any]? = nil
+) async throws -> T {
+    var request = URLRequest(url: url)
+    request.httpMethod = method
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    if let body = body {
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    }
+    
+    let (data, response) = try await URLSession.shared.data(for: request)
+    
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw APIError.serverError(detail: "Invalid response")
+    }
+    
+    switch httpResponse.statusCode {
+    case 200...299:
+        return try JSONDecoder().decode(T.self, from: data)
+        
+    case 401:
+        // Try refresh
+        try await refreshAccessToken()
+        // Retry original request recursively
+        return try await makeAuthenticatedRequest(url: url, method: method, body: body)
+        
+    case 402:
+        let error = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+        let balance = try? await fetchCreditBalance()
+        throw APIError.insufficientCredits(
+            balance: balance?.balance ?? 0,
+            cost: extractCost(from: error?.detail)
+        )
+        
+    case 403:
+        let error = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+        throw APIError.forbidden(message: error?.detail ?? "Access denied")
+        
+    case 404:
+        throw APIError.notFound
+        
+    case 422:
+        let validation = try? JSONDecoder().decode(ValidationError.self, from: data)
+        throw APIError.validationError(validation?.errors ?? ["Validation failed"])
+        
+    case 429:
+        let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init) ?? 60
+        throw APIError.rateLimited(retryAfter: retryAfter)
+        
+    default:
+        let error = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+        throw APIError.serverError(detail: error?.detail)
+    }
+}
+
+struct ErrorResponse: Codable {
+    let detail: String
+}
+
+struct ValidationError: Codable {
+    let detail: [ValidationDetail]
+    
+    var errors: [String] {
+        detail.map { "\($0.loc.last ?? "field"): \($0.msg)" }
+    }
+    
+    struct ValidationDetail: Codable {
+        let loc: [String]
+        let msg: String
+    }
+}
+```
+
+---
+
+## 8. Account Deletion
+
+<Warning>
+**Required for App Store approval.** Apple rejects apps without account deletion.
+</Warning>
+
+```swift
+func deleteAccount() async throws {
+    let url = URL(string: "https://your-app.railway.app/api/v1/auth/account")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    
+    let (_, response) = try await URLSession.shared.data(for: request)
+    
+    guard let httpResponse = response as? HTTPURLResponse,
+          httpResponse.statusCode == 200 else {
+        throw APIError.serverError(detail: "Failed to delete account")
+    }
+    
+    // Clear local tokens
+    KeychainHelper.deleteRefreshToken()
+    self.accessToken = nil
+}
+```
+
+**Show confirmation dialog:**
+
+```swift
+func showDeleteAccountConfirmation() {
+    let alert = UIAlertController(
+        title: "Delete Account",
+        message: "This will permanently delete your account and all associated data. This action cannot be undone.",
+        preferredStyle: .alert
+    )
+    
+    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    
+    alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
+        Task {
+            do {
+                try await self.deleteAccount()
+                // Navigate to sign-in
+            } catch {
+                // Show error
+            }
+        }
+    })
+    
+    present(alert, animated: true)
+}
+```
+
+---
+
+## 9. Visibility & Sharing
+
+### Private Timepoints
+
+Timepoints can be `"public"` (default) or `"private"`.
+
+**Behavior:**
+- **Public:** Anyone can view
+- **Private:** Only the owner can view (403 for others)
+
+**Set visibility during generation:**
+
+```swift
+let body: [String: Any] = [
+    "query": "My private moment",
+    "visibility": "private",
+    "preset": "balanced"
+]
+```
+
+**Change visibility after creation:**
+
+```swift
+func updateVisibility(timepointId: String, visibility: String) async throws {
+    let url = URL(string: "https://your-app.railway.app/api/v1/timepoints/\(timepointId)/visibility")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "PATCH"
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    let body = ["visibility": visibility]
+    request.httpBody = try? JSONEncoder().encode(body)
+    
+    let (data, _) = try await URLSession.shared.data(for: request)
+    _ = try JSONDecoder().decode(Timepoint.self, from: data)
+}
+```
+
+### Share Links
+
+Public timepoints include a `share_url` field when `SHARE_URL_BASE` is configured:
+
+```swift
+struct Timepoint: Codable {
+    let id: String
+    let visibility: String
+    let share_url: String?  // Only present for public timepoints
+    // ...
+}
+
+if let shareUrl = timepoint.share_url {
+    // Show share button
+    let activityVC = UIActivityViewController(
+        activityItems: [URL(string: shareUrl)!],
+        applicationActivities: nil
+    )
+    present(activityVC, animated: true)
+}
+```
+
+---
+
+## 10. Dev Admin Endpoints
+
+**For testing without iOS device:**
+
+Set `ADMIN_API_KEY` and use these endpoints:
+
+```bash
+# Create test user
+curl -X POST https://your-app.railway.app/api/v1/auth/dev/token \
+  -H "X-Admin-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com"}'
+
+# Grant credits
+curl -X POST https://your-app.railway.app/api/v1/credits/admin/grant \
+  -H "X-Admin-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "<uuid>", "amount": 100}'
+```
+
+**Do not expose these endpoints in production iOS app.**
+
+---
+
+## 11. Related Documentation
+
+- [Authentication](/api/authentication) — JWT flow details
+- [Credits](/api/credits) — Credit system reference
+- [Error Handling](/api/error-handling) — Complete error code reference
+- [SSE Streaming](/api/streaming) — Streaming protocol details
+- [Generation](/api/generation) — Scene generation endpoints

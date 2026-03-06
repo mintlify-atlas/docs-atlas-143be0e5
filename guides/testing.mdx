@@ -1,0 +1,274 @@
+---
+title: Testing
+description: Run and write tests for TIMEPOINT Flash
+---
+
+TIMEPOINT Flash has 660+ tests covering agents, API endpoints, and end-to-end pipelines.
+
+## Running Tests
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    pip install -e ".[dev]"
+    ```
+  </Step>
+
+  <Step title="Run all tests">
+    ```bash
+    pytest
+    ```
+  </Step>
+
+  <Step title="Run specific test suites">
+    ```bash
+    # Fast unit tests only (no API calls)
+    pytest -m fast
+
+    # Integration tests
+    pytest -m integration
+
+    # End-to-end tests (requires real API keys)
+    pytest -m e2e
+    ```
+  </Step>
+
+  <Step title="Run with coverage">
+    ```bash
+    pytest --cov=app --cov-report=html
+    open htmlcov/index.html
+    ```
+  </Step>
+</Steps>
+
+## Test Structure
+
+Tests are organized in three layers:
+
+```
+tests/
+├── unit/                    # Fast, isolated tests
+│   ├── test_agents/        # Agent logic
+│   ├── test_config.py      # Configuration
+│   └── test_models.py      # Database models
+├── integration/             # API + database tests
+│   ├── test_api_timepoints.py
+│   ├── test_api_temporal.py
+│   └── test_api_streaming.py
+└── e2e/                     # Full pipeline tests
+    └── test_pipeline_e2e.py
+```
+
+## Test Markers
+
+Use pytest markers to categorize tests:
+
+| Marker | Purpose | Example |
+|--------|---------|------|
+| `@pytest.mark.fast` | Unit tests (under 1s) | `@pytest.mark.fast def test_judge_prompt()` |
+| `@pytest.mark.integration` | API/DB tests | `@pytest.mark.integration async def test_api_create()` |
+| `@pytest.mark.e2e` | Full pipeline | `@pytest.mark.e2e async def test_generate_scene()` |
+| `@pytest.mark.requires_api` | Needs API keys | `@pytest.mark.requires_api async def test_real_llm()` |
+
+## Writing Agent Tests
+
+All agents follow the same test pattern from `app/agents/base.py:1`:
+
+```python tests/unit/test_agents/test_my_agent.py
+import pytest
+from unittest.mock import AsyncMock
+
+from app.agents.my_agent import MyAgent
+from app.schemas import MyResult
+from app.agents.base import AgentResult
+
+
+@pytest.mark.fast
+class TestMyAgent:
+    """Tests for MyAgent."""
+
+    def test_initialization(self):
+        """Test agent initialization."""
+        agent = MyAgent()
+        assert agent.name == "MyAgent"
+        assert agent.response_model == MyResult
+
+    def test_get_system_prompt(self):
+        """Test system prompt generation."""
+        agent = MyAgent()
+        prompt = agent.get_system_prompt()
+        assert "your task" in prompt.lower()
+
+    def test_get_prompt(self):
+        """Test user prompt generation."""
+        agent = MyAgent()
+        input_data = {"query": "test query"}
+        prompt = agent.get_prompt(input_data)
+        assert "test query" in prompt
+
+    @pytest.mark.asyncio
+    async def test_run_success(self):
+        """Test successful agent execution."""
+        # Mock the LLM router
+        mock_router = AsyncMock()
+        mock_router.call_structured = AsyncMock(
+            return_value=AgentResult(
+                success=True,
+                content=MyResult(answer="success"),
+                latency_ms=100,
+                model_used="gemini-2.5-flash",
+            )
+        )
+
+        agent = MyAgent(router=mock_router)
+        result = await agent.run("test input")
+
+        assert result.success
+        assert result.content.answer == "success"
+        assert result.latency_ms > 0
+```
+
+## Common Fixtures
+
+Fixtures are defined in `tests/conftest.py:1`. Key fixtures:
+
+### Database Fixtures
+
+```python
+@pytest_asyncio.fixture
+async def test_db():
+    """Create test database and clean up after."""
+    # Usage:
+    async def test_database_operation(test_db, db_session):
+        # test_db ensures database is initialized
+        # db_session provides a session
+        pass
+```
+
+### Sample Data Fixtures
+
+```python
+@pytest.fixture
+def sample_timepoint_data() -> dict:
+    """Sample timepoint data for testing."""
+    # Returns complete timepoint data structure
+
+@pytest_asyncio.fixture
+async def sample_timepoint(db_session, sample_timepoint_data):
+    """Create and return a sample timepoint in database."""
+    # Returns a Timepoint model instance
+```
+
+### Provider Mock Fixtures
+
+```python
+@pytest.fixture
+def mock_google_provider():
+    """Create a mocked Google provider."""
+    # Returns AsyncMock with call_text, generate_image, etc.
+
+@pytest.fixture
+def mock_openrouter_provider():
+    """Create a mocked OpenRouter provider."""
+    # Returns AsyncMock with provider methods
+```
+
+## API Testing
+
+Test API endpoints using the `test_client` fixture:
+
+```python tests/integration/test_api_timepoints.py
+import pytest
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_create_timepoint(test_client, test_db):
+    """Test POST /api/v1/generate."""
+    response = await test_client.post(
+        "/api/v1/generate",
+        json={"query": "signing of the declaration"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "id" in data
+    assert data["query"] == "signing of the declaration"
+    assert data["status"] == "pending"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_timepoint(test_client, test_db, sample_timepoint):
+    """Test GET /api/v1/timepoints/{id}."""
+    response = await test_client.get(
+        f"/api/v1/timepoints/{sample_timepoint.id}"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == str(sample_timepoint.id)
+```
+
+## End-to-End Testing
+
+E2E tests run the full pipeline with real API keys:
+
+```python tests/e2e/test_pipeline_e2e.py
+import pytest
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_full_pipeline(real_router, e2e_test_db):
+    """Test complete scene generation pipeline."""
+    from app.core.pipeline import ScenePipeline
+
+    pipeline = ScenePipeline(router=real_router)
+    result = await pipeline.generate(
+        query="signing of the declaration of independence"
+    )
+
+    assert result.success
+    assert result.timepoint is not None
+    assert result.timepoint.status == "completed"
+    assert result.timepoint.year == 1776
+```
+
+<Note>
+E2E tests require real API keys in `.env`. Set `GOOGLE_API_KEY` or `OPENROUTER_API_KEY` before running `pytest -m e2e`.
+</Note>
+
+## Test Coverage Goals
+
+TIMEPOINT Flash maintains high test coverage:
+
+- **Agents**: 95%+ coverage (core business logic)
+- **API Routes**: 90%+ coverage (all endpoints)
+- **Database Models**: 85%+ coverage
+- **Utilities**: 80%+ coverage
+
+## Continuous Integration
+
+GitHub Actions runs tests on every push:
+
+```yaml .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]"
+      - run: pytest -m "fast or integration" --cov
+```
+
+<Tip>
+Run `pytest -m fast` before committing to catch issues early. Fast tests complete in under 10 seconds.
+</Tip>

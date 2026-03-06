@@ -1,0 +1,311 @@
+---
+title: 'Timepoint Endpoints'
+description: 'Retrieve, list, and manage generated scenes'
+---
+
+Timepoint endpoints provide read access to generated scenes and allow updating visibility settings.
+
+## GET /api/v1/timepoints/{id}
+
+Retrieve a timepoint by ID.
+
+### Authentication
+
+Optional. Private timepoints return 403 for non-owners.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="full" type="boolean" default="false">
+  Include full metadata (scene, characters, dialog)
+</ParamField>
+
+<ParamField query="include_image" type="boolean" default="false">
+  Include base64 image data in response
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Timepoint UUID
+</ResponseField>
+
+<ResponseField name="query" type="string">
+  Original query
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-safe slug (e.g. `"oppenheimer-trinity-abc123"`)
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Status: `completed`, `failed`, `processing`
+</ResponseField>
+
+<ResponseField name="year" type="integer">
+  Temporal year (negative for BCE)
+</ResponseField>
+
+<ResponseField name="month" type="integer">
+  Month (1-12)
+</ResponseField>
+
+<ResponseField name="day" type="integer">
+  Day of month
+</ResponseField>
+
+<ResponseField name="season" type="string">
+  Season: `spring`, `summer`, `fall`, `winter`
+</ResponseField>
+
+<ResponseField name="time_of_day" type="string">
+  Time: `pre-dawn`, `dawn`, `morning`, `afternoon`, `evening`, `night`
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Geographic location
+</ResponseField>
+
+<ResponseField name="has_image" type="boolean">
+  Whether an image exists (always included)
+</ResponseField>
+
+<ResponseField name="image_url" type="string">
+  Base64 image data (null unless `include_image=true`)
+</ResponseField>
+
+<ResponseField name="text_model_used" type="string">
+  Model used for text generation
+</ResponseField>
+
+<ResponseField name="image_model_used" type="string">
+  Model used for image generation
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Visibility: `public` or `private`
+</ResponseField>
+
+<ResponseField name="share_url" type="string">
+  Public share URL (null for private timepoints)
+</ResponseField>
+
+<ResponseField name="characters" type="object">
+  Character data (only if `full=true`)
+</ResponseField>
+
+<ResponseField name="dialog" type="array">
+  Dialog lines (only if `full=true`)
+</ResponseField>
+
+<ResponseField name="scene" type="object">
+  Scene data (only if `full=true`)
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000?full=true
+```
+
+**Response:**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "query": "Oppenheimer watches the Trinity test",
+  "slug": "oppenheimer-trinity-test-abc123",
+  "status": "completed",
+  "year": 1945,
+  "month": 7,
+  "day": 16,
+  "season": "summer",
+  "time_of_day": "pre-dawn",
+  "location": "Control bunker S-10000, Jornada del Muerto, New Mexico",
+  "has_image": true,
+  "visibility": "public",
+  "share_url": "https://timepointai.com/t/oppenheimer-trinity-abc123",
+  "characters": {
+    "characters": [
+      {"name": "J. Robert Oppenheimer", "role": "primary"},
+      {"name": "Kenneth Bainbridge", "role": "secondary"}
+    ]
+  },
+  "dialog": [
+    {"speaker": "Bainbridge", "text": "Now we are all sons of bitches."}
+  ]
+}
+```
+
+<Note>
+**Private timepoints:** Non-owners receive redacted responses with sensitive fields nulled (characters, dialog, scene, image).
+</Note>
+
+---
+
+## GET /api/v1/timepoints
+
+List timepoints with pagination and visibility filtering.
+
+### Authentication
+
+Optional. Anonymous users see only public timepoints. Authenticated users see public + own private timepoints.
+
+### Query Parameters
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed)
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="20">
+  Items per page (max 100)
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by status: `completed`, `failed`, `processing`
+</ParamField>
+
+<ParamField query="visibility" type="string">
+  Filter by visibility: `public` or `private` (private restricted to owner)
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of timepoint summaries
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total matching timepoints
+</ResponseField>
+
+<ResponseField name="page" type="integer">
+  Current page number
+</ResponseField>
+
+<ResponseField name="page_size" type="integer">
+  Items per page
+</ResponseField>
+
+### Example
+
+```bash
+curl "http://localhost:8000/api/v1/timepoints?page=1&page_size=10&status=completed"
+```
+
+---
+
+## PATCH /api/v1/timepoints/{id}/visibility
+
+Update a timepoint's visibility. **Owner-only** (or open when `AUTH_ENABLED=false`).
+
+### Authentication
+
+Requires Bearer JWT when `AUTH_ENABLED=true`. Must be the timepoint owner.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="visibility" type="string" required>
+  New visibility: `public` or `private`
+</ParamField>
+
+### Response
+
+Returns full `TimepointResponse` with updated visibility.
+
+### Example
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000/visibility \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"visibility": "private"}'
+```
+
+### Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 200 | Success |
+| 400 | Invalid visibility value |
+| 403 | Not the owner |
+| 404 | Timepoint not found |
+
+---
+
+## GET /api/v1/timepoints/slug/{slug}
+
+Retrieve a timepoint by URL-safe slug.
+
+### Path Parameters
+
+<ParamField path="slug" type="string" required>
+  URL-safe slug (e.g. `"oppenheimer-trinity-abc123"`)
+</ParamField>
+
+### Query Parameters
+
+Same as `GET /api/v1/timepoints/{id}` (supports `full` and `include_image`).
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/timepoints/slug/oppenheimer-trinity-abc123
+```
+
+---
+
+## DELETE /api/v1/timepoints/{id}
+
+Delete a timepoint.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Timepoint UUID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="permanent" type="boolean" default="false">
+  Permanently delete (skip soft-delete)
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Timepoint UUID
+</ResponseField>
+
+<ResponseField name="deleted" type="boolean">
+  Always `true`
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000
+```
+
+<Note>
+**Soft delete** (default): Sets `is_deleted=true` and moves blob to `.trash`. **Hard delete**: Permanently removes from database.
+</Note>

@@ -1,0 +1,756 @@
+---
+title: Deployment
+description: Deploy TIMEPOINT Flash locally, to Railway, or with Docker
+---
+
+## Deployment Options
+
+TIMEPOINT Flash can be deployed in three ways:
+
+<CardGroup cols={3}>
+  <Card title="Local Development" icon="laptop">
+    SQLite database, auto-reload, perfect for testing
+  </Card>
+  <Card title="Railway (Recommended)" icon="train">
+    PostgreSQL, auto-deploy, health checks, production-ready
+  </Card>
+  <Card title="Docker" icon="docker">
+    Multi-stage build, portable, works anywhere
+  </Card>
+</CardGroup>
+
+## Local Development
+
+Best for development and testing with SQLite.
+
+<Steps>
+  <Step title="Clone and Install">
+    ```bash
+    git clone https://github.com/timepoint-ai/timepoint-flash.git
+    cd timepoint-flash
+    pip install -e .
+    ```
+  </Step>
+
+  <Step title="Configure Environment">
+    ```bash
+    cp .env.example .env
+    # Edit .env and add your API keys
+    ```
+
+    **Minimal configuration:**
+    ```bash .env
+    GOOGLE_API_KEY=your-key-here
+    DATABASE_URL=sqlite+aiosqlite:///./timepoint.db
+    AUTH_ENABLED=false
+    ```
+  </Step>
+
+  <Step title="Run Migrations">
+    ```bash
+    alembic upgrade head
+    ```
+    
+    This creates the SQLite database and applies all schema migrations.
+  </Step>
+
+  <Step title="Start Server">
+    ```bash
+    # Development mode (auto-reload)
+    ./run.sh -r
+    
+    # Or manually
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ```
+    
+    Server starts at `http://localhost:8000`
+  </Step>
+</Steps>
+
+### Development Tools
+
+<CardGroup cols={2}>
+  <Card title="Interactive Docs" icon="book">
+    `http://localhost:8000/docs`
+    
+    Swagger UI for testing endpoints
+  </Card>
+  
+  <Card title="Health Check" icon="heart-pulse">
+    `http://localhost:8000/health`
+    
+    Verify server and providers
+  </Card>
+  
+  <Card title="Demo Script" icon="terminal">
+    `./demo.sh`
+    
+    Interactive demo with 10 templates
+  </Card>
+  
+  <Card title="Test Suite" icon="vial">
+    `pytest tests/ -v`
+    
+    660+ tests for validation
+  </Card>
+</CardGroup>
+
+## Railway (Production)
+
+Railway provides the easiest production deployment with PostgreSQL, auto-deploy from GitHub, and built-in health checks.
+
+### Setup
+
+<Steps>
+  <Step title="Create Railway Project">
+    1. Go to [Railway](https://railway.app)
+    2. Create new project
+    3. Connect your GitHub repository
+    4. Railway auto-detects the `Dockerfile`
+  </Step>
+
+  <Step title="Add PostgreSQL">
+    1. Click "Add Plugin"
+    2. Select "PostgreSQL"
+    3. Railway creates a database and sets `DATABASE_URL` automatically
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Add these in the Railway dashboard (Variables tab):
+
+    | Variable | Required | Value |
+    |----------|----------|-------|
+    | `DATABASE_URL` | Auto | `${{Postgres.DATABASE_URL}}` (reference from plugin) |
+    | `GOOGLE_API_KEY` | Yes | Get from [AI Studio](https://aistudio.google.com) |
+    | `OPENROUTER_API_KEY` | No | Get from [OpenRouter](https://openrouter.ai) |
+    | `ENVIRONMENT` | No | `production` |
+    | `AUTH_ENABLED` | No | `false` (default) or `true` for iOS mode |
+    | `JWT_SECRET_KEY` | If auth | Run: `openssl rand -hex 32` |
+    | `FLASH_SERVICE_KEY` | No | Shared secret for service-to-service auth |
+    | `CORS_ENABLED` | No | `true` (default) |
+    | `CORS_ORIGINS` | No | Comma-separated allowed origins |
+    | `SHARE_URL_BASE` | No | `https://timepointai.com/t` (enables share URLs) |
+
+    <Note>
+    Use the `${{Postgres.DATABASE_URL}}` syntax to reference the PostgreSQL plugin. Railway automatically replaces this with the connection string.
+    </Note>
+  </Step>
+
+  <Step title="Deploy">
+    Push to your connected branch:
+    ```bash
+    git push origin main
+    ```
+    
+    Railway automatically:
+    - Builds the Dockerfile
+    - Runs database migrations (via Dockerfile CMD)
+    - Deploys to a public URL
+    - Sets up health checks
+  </Step>
+</Steps>
+
+### How Railway Deployment Works
+
+<Tabs>
+  <Tab title="Dockerfile">
+    Multi-stage build for minimal image size:
+
+    ```dockerfile
+    # Builder stage
+    FROM python:3.12-slim as builder
+    WORKDIR /build
+    COPY pyproject.toml .
+    RUN pip install --no-cache-dir .
+
+    # Runtime stage
+    FROM python:3.12-slim
+    WORKDIR /app
+    COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+    COPY . .
+
+    # Run migrations then start server
+    CMD alembic upgrade head && \
+        uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4
+    ```
+
+    <Note>
+    Migrations run at container startup, not as a pre-deploy command. This ensures the database is always in sync.
+    </Note>
+  </Tab>
+
+  <Tab title="railway.json">
+    Configuration as code:
+
+    ```json
+    {
+      "build": {
+        "builder": "DOCKERFILE"
+      },
+      "deploy": {
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      },
+      "healthcheck": {
+        "path": "/health",
+        "timeout": 100
+      }
+    }
+    ```
+
+    Railway automatically:
+    - Restarts unhealthy containers
+    - Retries up to 3 times on failure
+    - Checks `/health` endpoint
+  </Tab>
+
+  <Tab title="Branch Mapping">
+    | Branch | Environment | Auto-deploy | CI Required |
+    |--------|-------------|-------------|-------------|
+    | `main` | Production | Yes | Yes |
+    | `develop` | Development | Yes | No |
+
+    **"Wait for CI"** gate on `main` prevents deployment if tests fail.
+  </Tab>
+</Tabs>
+
+### Verify Deployment
+
+<CodeGroup>
+```bash Health Check
+curl https://your-app.up.railway.app/health
+
+# Expected response:
+{
+  "status": "healthy",
+  "version": "2.4.0",
+  "database": true,
+  "providers": {
+    "google": true,
+    "openrouter": true
+  }
+}
+```
+
+```bash Generate Scene
+curl -X POST https://your-app.up.railway.app/api/v1/timepoints/generate/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Alan Turing breaks Enigma at Bletchley Park Hut 8, winter 1941",
+    "preset": "balanced",
+    "generate_image": true
+  }'
+```
+
+```bash Smoke Test
+# Run from GitHub Actions
+gh workflow run smoke.yml -f target_url=https://your-app.up.railway.app
+```
+</CodeGroup>
+
+## Docker Deployment
+
+For custom hosting or local Docker testing.
+
+### Build and Run
+
+<Steps>
+  <Step title="Build Image">
+    ```bash
+    docker build -t timepoint-flash .
+    ```
+    
+    The multi-stage Dockerfile produces a minimal image (~400MB).
+  </Step>
+
+  <Step title="Run with SQLite (Local Testing)">
+    ```bash
+    docker run -p 8080:8080 \
+      -e DATABASE_URL=sqlite+aiosqlite:///./timepoint.db \
+      -e GOOGLE_API_KEY=your-key \
+      -e ENVIRONMENT=development \
+      timepoint-flash
+    ```
+  </Step>
+
+  <Step title="Run with PostgreSQL (Production)">
+    ```bash
+    docker run -p 8080:8080 \
+      -e DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/timepoint \
+      -e GOOGLE_API_KEY=your-key \
+      -e OPENROUTER_API_KEY=your-key \
+      -e ENVIRONMENT=production \
+      -e AUTH_ENABLED=false \
+      -e BLOB_STORAGE_ENABLED=true \
+      timepoint-flash
+    ```
+  </Step>
+</Steps>
+
+### Docker Compose
+
+For local development with PostgreSQL:
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: timepoint
+      POSTGRES_PASSWORD: timepoint
+      POSTGRES_DB: timepoint
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://timepoint:timepoint@db:5432/timepoint
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      ENVIRONMENT: development
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
+```
+
+**Run:**
+```bash
+docker-compose up
+```
+
+### Manual Run (Without Docker)
+
+For environments where Docker isn't available:
+
+```bash
+# Install dependencies
+pip install -e .
+
+# Run migrations
+alembic upgrade head
+
+# Start with production workers
+uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+```
+
+## Environment Configuration
+
+### Required Variables
+
+<Note>
+At minimum, you need **one** LLM provider API key.
+</Note>
+
+```bash
+# LLM Provider (at least one required)
+GOOGLE_API_KEY=           # Get from https://aistudio.google.com (free)
+OPENROUTER_API_KEY=       # Get from https://openrouter.ai (optional)
+
+# Database
+DATABASE_URL=sqlite+aiosqlite:///./timepoint.db  # SQLite for dev
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db  # PostgreSQL for prod
+```
+
+### Auth Configuration (Optional)
+
+<Warning>
+Auth is **disabled** by default. All endpoints are open-access. Only enable for iOS app deployment.
+</Warning>
+
+```bash
+# Auth (for iOS app mode)
+AUTH_ENABLED=false                                    # Set true to require JWT
+JWT_SECRET_KEY=change-me-to-a-random-32-char-string  # Required when AUTH_ENABLED=true
+JWT_ACCESS_EXPIRE_MINUTES=15                          # Access token lifetime
+JWT_REFRESH_EXPIRE_DAYS=30                            # Refresh token lifetime
+APPLE_BUNDLE_ID=com.yourcompany.app                  # For Apple Sign-In
+SIGNUP_CREDITS=50                                     # Free credits on first sign-in
+```
+
+### Service-to-Service Auth (Optional)
+
+```bash
+# Service Key (for internal microservices)
+FLASH_SERVICE_KEY=         # Shared secret for X-Service-Key header
+                          # Empty = service-key auth disabled
+
+# CORS
+CORS_ENABLED=true         # Set false when Flash is internal-only (no browser callers)
+CORS_ORIGINS=https://app.timepointai.com,https://timepointai.com
+```
+
+**Service auth evaluation order:**
+1. **Service key + X-User-ID** → Billing relays user requests (credits from user)
+2. **Service key only** → Clockchain system calls (unmetered, no user context)
+3. **Bearer JWT** → Direct user auth (iOS app)
+
+### Optional Features
+
+```bash
+# Application
+ENVIRONMENT=development                 # development | staging | production
+DEBUG=true                              # Enable debug logging
+RATE_LIMIT=60                           # Requests per minute per IP
+
+# Blob Storage
+BLOB_STORAGE_ENABLED=false              # Export scenes to filesystem
+BLOB_STORAGE_ROOT=./output/timepoints   # Storage directory
+
+# Sharing
+SHARE_URL_BASE=https://timepointai.com/t  # Enables share_url in responses
+
+# Observability (optional)
+LOGFIRE_TOKEN=                          # Logfire integration for monitoring
+```
+
+### Billing Configuration
+
+<Note>
+The open-source version uses `NoOpBilling`—all credit checks pass. For custom billing, implement the `BillingProvider` protocol in `app/services/billing.py`.
+</Note>
+
+```bash
+# Billing (for production)
+BILLING_ENABLED=false     # Set true to enable billing integration
+ADMIN_API_KEY=            # Secret key for dev admin endpoints
+```
+
+## Database Management
+
+### Migrations
+
+Flash uses Alembic for schema migrations:
+
+<CodeGroup>
+```bash Apply Migrations
+# Upgrade to latest
+alembic upgrade head
+
+# Upgrade to specific revision
+alembic upgrade abc123
+```
+
+```bash Create Migration
+# Auto-generate from schema changes
+alembic revision --autogenerate -m "add new column"
+
+# Create empty migration
+alembic revision -m "custom migration"
+```
+
+```bash View History
+# Show current version
+alembic current
+
+# Show all revisions
+alembic history
+
+# Show pending migrations
+alembic heads
+```
+
+```bash Rollback
+# Downgrade one revision
+alembic downgrade -1
+
+# Downgrade to specific revision
+alembic downgrade abc123
+```
+</CodeGroup>
+
+### SQLite vs PostgreSQL
+
+<Tabs>
+  <Tab title="SQLite (Development)">
+    **Pros:**
+    - Zero setup
+    - Single file database
+    - Perfect for local development
+    - No external dependencies
+
+    **Cons:**
+    - Not for production
+    - No concurrent writes
+    - Limited performance
+
+    ```bash
+    DATABASE_URL=sqlite+aiosqlite:///./timepoint.db
+    ```
+  </Tab>
+
+  <Tab title="PostgreSQL (Production)">
+    **Pros:**
+    - Production-ready
+    - Concurrent writes
+    - Better performance
+    - Full SQL features
+
+    **Cons:**
+    - Requires external database
+    - More complex setup
+
+    ```bash
+    DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/timepoint
+    ```
+
+    **Railway provides PostgreSQL automatically** via plugin.
+  </Tab>
+</Tabs>
+
+## Blob Storage
+
+When enabled, each generation writes a self-contained folder:
+
+```bash
+BLOB_STORAGE_ENABLED=true
+BLOB_STORAGE_ROOT=./output/timepoints
+```
+
+**Generated structure:**
+```
+output/timepoints/2026/02/
+└── alan-turing-breaks-enigma_20260209_d46138/
+    ├── image.png              # Generated image
+    ├── metadata.json          # Scene, characters, dialog
+    ├── generation_log.json    # Step timings, models used
+    ├── manifest.json          # File inventory with SHA256 hashes
+    └── index.html             # Self-contained viewer (dark theme)
+```
+
+**Each folder is portable**—copy it anywhere and open `index.html` to view the complete scene.
+
+<Note>
+Blob storage is independent of the database. Disable it if you only want database storage.
+</Note>
+
+## Performance Tuning
+
+### Workers
+
+Adjust the number of uvicorn workers based on your CPU:
+
+```bash
+# Single worker (development)
+uvicorn app.main:app --workers 1
+
+# Production (4-8 workers)
+uvicorn app.main:app --workers 4
+
+# Auto-detect CPUs
+uvicorn app.main:app --workers $(nproc)
+```
+
+<Warning>
+More workers = more concurrent requests but more memory. Start with 4 and adjust based on load.
+</Warning>
+
+### Parallelism Mode
+
+Control how many LLM calls run concurrently:
+
+```python
+# In your request
+{
+  "query": "...",
+  "parallelism_mode": "normal"  # sequential | normal | aggressive | max
+}
+```
+
+| Mode | Concurrent Calls | Best For |
+|------|------------------|----------|
+| `sequential` | 1 | Debugging, strict rate limits |
+| `normal` | 1-3 | Default, balanced |
+| `aggressive` | 2-5 | Faster, more API quota |
+| `max` | Up to 8 | Maximum speed, high quota |
+
+### Rate Limiting
+
+Built-in rate limiting per IP:
+
+```bash
+RATE_LIMIT=60  # Requests per minute per IP
+```
+
+Disable for internal services:
+```bash
+RATE_LIMIT=0
+```
+
+## Health Monitoring
+
+### Health Endpoint
+
+```bash
+curl https://your-app.up.railway.app/health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "version": "2.4.0",
+  "database": true,
+  "providers": {
+    "google": true,
+    "openrouter": false
+  }
+}
+```
+
+<Note>
+Railway uses this endpoint for health checks. If it returns non-200, the container is restarted.
+</Note>
+
+### Provider Status
+
+Check which LLM providers are available:
+
+```bash
+curl https://your-app.up.railway.app/api/v1/models/providers
+```
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "provider": "google",
+      "available": true,
+      "models": ["gemini-2.5-flash", "gemini-2.0-flash"]
+    },
+    {
+      "provider": "openrouter",
+      "available": false,
+      "error": "API key not configured"
+    }
+  ]
+}
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="API Keys">
+    - Never commit API keys to version control
+    - Use environment variables or secrets management
+    - Rotate keys periodically
+    - Use separate keys for dev/staging/prod
+  </Accordion>
+
+  <Accordion title="Database">
+    - Use strong passwords for PostgreSQL
+    - Enable SSL connections in production
+    - Regular backups (Railway does this automatically)
+    - Don't expose database ports publicly
+  </Accordion>
+
+  <Accordion title="CORS">
+    - Set specific origins instead of `*`
+    - Disable CORS for internal-only services
+    - Use `CORS_ORIGINS` to whitelist domains
+  </Accordion>
+
+  <Accordion title="Auth">
+    - Use strong JWT secrets (32+ characters)
+    - Enable auth for production deployments
+    - Set appropriate token expiration
+    - Implement rate limiting
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database connection fails">
+    **Check connection string:**
+    ```bash
+    # PostgreSQL format
+    postgresql+asyncpg://user:password@host:port/database
+    
+    # SQLite format
+    sqlite+aiosqlite:///./timepoint.db
+    ```
+    
+    **Test connection:**
+    ```bash
+    # From within container
+    python -c "from app.database import check_db_connection; import asyncio; asyncio.run(check_db_connection())"
+    ```
+  </Accordion>
+
+  <Accordion title="Migrations fail">
+    **Check current version:**
+    ```bash
+    alembic current
+    ```
+    
+    **Force to specific version:**
+    ```bash
+    # Stamp as specific version without running migrations
+    alembic stamp head
+    ```
+    
+    **Reset database (DANGER):**
+    ```bash
+    # This deletes all data
+    alembic downgrade base
+    alembic upgrade head
+    ```
+  </Accordion>
+
+  <Accordion title="Railway deployment fails">
+    **Check build logs:**
+    - Go to Railway dashboard → Deployments → Click failed deployment
+    - Check for missing dependencies
+    - Verify Dockerfile syntax
+    
+    **Common issues:**
+    - Missing `railway.json` (use defaults)
+    - Wrong `DATABASE_URL` format
+    - Missing API keys
+    - Port not set to `$PORT`
+  </Accordion>
+
+  <Accordion title="High memory usage">
+    **Reduce workers:**
+    ```bash
+    uvicorn app.main:app --workers 2  # Instead of 4
+    ```
+    
+    **Disable blob storage:**
+    ```bash
+    BLOB_STORAGE_ENABLED=false
+    ```
+    
+    **Use sequential mode:**
+    ```json
+    {"parallelism_mode": "sequential"}
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Complete endpoint documentation
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Advanced configuration options
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understanding the agent pipeline
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/timepoint-ai/timepoint-flash">
+    Source code and issues
+  </Card>
+</CardGroup>

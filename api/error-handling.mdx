@@ -1,0 +1,644 @@
+---
+title: "Error Handling"
+description: "HTTP status codes, error response format, and common error scenarios"
+---
+
+## Error Response Format
+
+All errors return a JSON object with a consistent structure:
+
+```json
+{
+  "detail": "Human-readable error message"
+}
+```
+
+Validation errors (422) include additional field-level details:
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "query"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+---
+
+## HTTP Status Codes
+
+### 400 Bad Request
+
+**Cause:** Invalid request state or business logic violation.
+
+**Examples:**
+- Attempting to chat with a character that doesn't exist in the scene
+- Trying to export a timepoint that's still processing
+- Invalid visibility value (must be `"public"` or `"private"`)
+
+```json
+{
+  "detail": "Timepoint must be completed before export"
+}
+```
+
+**Client action:** Show error to user, don't retry.
+
+---
+
+### 401 Unauthorized
+
+**Cause:** Missing, invalid, or expired authentication token.
+
+**Only returned when `AUTH_ENABLED=true`.** When auth is disabled, all endpoints are open.
+
+**Examples:**
+- Missing `Authorization` header
+- Malformed JWT token
+- Token expired (access tokens valid for 15 minutes)
+- User account deactivated
+
+```json
+{
+  "detail": "Missing or invalid Authorization header"
+}
+```
+
+**Response headers:**
+```
+WWW-Authenticate: Bearer
+```
+
+**Client action:**
+1. Try `POST /auth/refresh` with refresh token
+2. If refresh fails, redirect to Apple Sign-In
+3. Never retry the original request with the same token
+
+---
+
+### 402 Payment Required
+
+**Cause:** Insufficient credits for the requested operation.
+
+**Only returned when `AUTH_ENABLED=true` and user is authenticated.**
+
+**Examples:**
+- User has 3 credits, attempts generation (costs 5 credits)
+- User has 0 credits, attempts chat (costs 1 credit)
+
+```json
+{
+  "detail": "Insufficient credits. This operation costs 5 credits."
+}
+```
+
+**Credit costs:**
+- Scene generation (balanced): **5 credits**
+- Scene generation (HD): **10 credits**
+- Scene generation (hyper/gemini3): **5 credits**
+- Character chat: **1 credit**
+- Temporal jump: **2 credits**
+
+Fetch live costs: `GET /api/v1/credits/costs`
+
+**Client action:**
+1. Show user their current balance (`GET /credits/balance`)
+2. Explain the cost of the operation
+3. Prompt for credit purchase (future — not yet implemented)
+
+---
+
+### 403 Forbidden
+
+**Cause:** Valid authentication, but insufficient permissions.
+
+**Common scenarios:**
+
+#### Private Timepoint (Non-Owner)
+
+Attempting to access a private timepoint you don't own.
+
+```json
+{
+  "detail": "This timepoint is private"
+}
+```
+
+**Returned by:**
+- `GET /timepoints/{id}` — when timepoint is private and requester is not the owner
+- `POST /interactions/{id}/chat` — when timepoint is private and requester is not the owner
+- `POST /temporal/{id}/next` — when timepoint is private and requester is not the owner
+
+**Behavior:**
+- **Anonymous users:** Always 403 for private timepoints
+- **Authenticated non-owners:** 403 for private timepoints
+- **Owners:** Full access to their own private timepoints
+
+#### Admin Key Missing or Invalid
+
+Attempting to use admin endpoints without valid `X-Admin-Key`.
+
+```json
+{
+  "detail": "Admin endpoints are disabled (ADMIN_API_KEY not set)"
+}
+```
+
+Or:
+
+```json
+{
+  "detail": "Invalid admin key"
+}
+```
+
+**Affected endpoints:**
+- `POST /auth/dev/token` — create test users
+- `POST /credits/admin/grant` — grant credits to any user
+
+#### Service Key Missing or Invalid
+
+When `FLASH_SERVICE_KEY` is configured, all API requests (except `/health`, `/docs`, `/redoc`) require a valid `X-Service-Key` header.
+
+```json
+{
+  "error": "Invalid or missing service key"
+}
+```
+
+**Client action:**
+- For private timepoint errors: Show "This scene is private" message
+- For admin errors: Don't expose admin endpoints to end users
+- For service key errors: Verify your `X-Service-Key` header
+
+---
+
+### 404 Not Found
+
+**Cause:** Resource doesn't exist or was soft-deleted.
+
+**Examples:**
+- Timepoint ID doesn't exist
+- User ID not found (when using `X-User-ID` header with service key)
+- Timepoint has no character data yet (generation still in progress)
+
+```json
+{
+  "detail": "Timepoint not found"
+}
+```
+
+Special case for user resolution:
+
+```json
+{
+  "detail": "User abc123 not found. Call POST /api/v1/users/resolve first."
+}
+```
+
+**Client action:**
+- Show appropriate empty state
+- For generation in progress: Poll `GET /timepoints/{id}` until `status == "completed"`
+- For missing users: Call `POST /users/resolve` with `external_id` to create user
+
+---
+
+### 422 Unprocessable Entity
+
+**Cause:** Request body validation failed.
+
+**Examples:**
+- Missing required field
+- Invalid field type (e.g. string instead of integer)
+- Value out of range (e.g. query longer than 500 characters)
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "query"],
+      "msg": "ensure this value has at least 3 characters",
+      "type": "value_error.any_str.min_length",
+      "ctx": {"limit_value": 3}
+    }
+  ]
+}
+```
+
+**Field validation rules:**
+
+| Field | Constraint |
+|-------|------------|
+| `query` | 3-500 characters |
+| `preset` | Must be `"hd"`, `"hyper"`, `"balanced"`, or `"gemini3"` |
+| `visibility` | Must be `"public"` or `"private"` |
+| `message` (chat) | Required, non-empty |
+| `units` (time travel) | 1-365 |
+| `unit` (time travel) | Must be `second`, `minute`, `hour`, `day`, `week`, `month`, or `year` |
+
+**Client action:**
+- Parse `detail` array and show field-specific errors to user
+- Highlight invalid form fields
+- Don't retry until user corrects input
+
+---
+
+### 429 Too Many Requests
+
+**Cause:** Rate limit exceeded.
+
+**Default limit:** 60 requests per minute per IP address.
+
+```json
+{
+  "detail": "Rate limit exceeded. Please try again later."
+}
+```
+
+**Response headers:**
+```
+Retry-After: 60
+```
+
+**Client action:**
+- Exponential backoff: start at 1s, double on each retry, max 30s
+- Show rate limit message to user
+- Respect `Retry-After` header if present
+
+**Example retry logic:**
+
+```python
+import asyncio
+
+async def request_with_retry(url, max_retries=3):
+    backoff = 1.0
+    for attempt in range(max_retries):
+        response = await client.post(url)
+        
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", backoff))
+            await asyncio.sleep(retry_after)
+            backoff = min(backoff * 2, 30)  # Max 30s
+            continue
+        
+        return response
+    
+    raise Exception("Max retries exceeded")
+```
+
+---
+
+### 500 Internal Server Error
+
+**Cause:** Unexpected server error.
+
+```json
+{
+  "error": "Internal server error",
+  "detail": null
+}
+```
+
+When `DEBUG=true`, the response includes error details:
+
+```json
+{
+  "error": "Internal server error",
+  "detail": "Database connection timeout"
+}
+```
+
+**Client action:**
+- Retry once after 2-5 seconds
+- If retry fails, show generic error message
+- Log full response for debugging
+
+---
+
+## Common Error Scenarios
+
+### Expired Access Token
+
+**Sequence:**
+
+1. Client sends request with expired access token
+2. Server returns 401 with `"detail": "Token expired"`
+3. Client calls `POST /auth/refresh` with refresh token
+4. Server returns new JWT pair
+5. Client retries original request with new access token
+
+**Example:**
+
+```javascript
+async function makeAuthenticatedRequest(url, body) {
+  let response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  
+  if (response.status === 401) {
+    // Try refresh
+    const refreshResponse = await fetch('/api/v1/auth/refresh', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({refresh_token: refreshToken}),
+    });
+    
+    if (refreshResponse.ok) {
+      const tokens = await refreshResponse.json();
+      accessToken = tokens.access_token;
+      refreshToken = tokens.refresh_token;
+      
+      // Retry original request
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } else {
+      // Refresh failed, redirect to login
+      redirectToLogin();
+      return;
+    }
+  }
+  
+  return response;
+}
+```
+
+---
+
+### Insufficient Credits
+
+**Sequence:**
+
+1. Client attempts generation with 3 credits (costs 5)
+2. Server checks balance before generation starts
+3. Server returns 402 with cost information
+4. Client fetches current balance
+5. Client shows balance and prompts for top-up
+
+**Example:**
+
+```javascript
+const response = await fetch('/api/v1/timepoints/generate/sync', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    query: 'Oppenheimer Trinity test 1945',
+    preset: 'balanced',
+  }),
+});
+
+if (response.status === 402) {
+  const error = await response.json();
+  
+  // Fetch current balance
+  const balanceResponse = await fetch('/api/v1/credits/balance', {
+    headers: {'Authorization': `Bearer ${accessToken}`},
+  });
+  const balance = await balanceResponse.json();
+  
+  // Show error to user
+  alert(`${error.detail}\n\nYour balance: ${balance.balance} credits`);
+  
+  // Prompt for purchase (future)
+  // navigateToCreditPurchase();
+}
+```
+
+---
+
+### Private Timepoint Access
+
+**Sequence:**
+
+1. User B attempts to view User A's private timepoint
+2. Server checks `timepoint.user_id == current_user.id`
+3. Server returns 403 (not 404 — don't leak existence)
+4. Client shows "This scene is private" message
+
+**Redacted response for non-owners:**
+
+When a private timepoint is accessed by a non-owner via the list endpoint, sensitive fields are redacted:
+
+```json
+{
+  "id": "550e8400-...",
+  "query": "My private moment",
+  "slug": "my-private-moment-abc123",
+  "status": "completed",
+  "visibility": "private",
+  "has_image": false,
+  "characters": null,
+  "dialog": null,
+  "scene": null,
+  "image_url": null,
+  "image_base64": null
+}
+```
+
+---
+
+## Generation Errors
+
+### Query Validation Failed
+
+The Judge agent rejected the query as not historical.
+
+**Returned by:** All generation endpoints (`/generate`, `/generate/sync`, `/generate/stream`)
+
+**Error in response:**
+```json
+{
+  "status": "failed",
+  "error": "Query validation failed: not a historical query. Please provide a specific historical moment."
+}
+```
+
+**Why this happens:**
+- Query is too vague (e.g. "a person")
+- Query is fictional (e.g. "Harry Potter at Hogwarts")
+- Query is future-oriented (e.g. "Mars landing 2050")
+
+**Client action:** Show error and prompt user to refine query.
+
+---
+
+### All Providers Failed
+
+Both Google and OpenRouter exhausted or rate-limited.
+
+```json
+{
+  "status": "failed",
+  "error": "All providers failed: Google quota exhausted, OpenRouter rate limited"
+}
+```
+
+**Why this happens:**
+- Daily API quota exhausted on both providers
+- Both providers experiencing outages
+- Rate limits exceeded on both
+
+**Client action:** Show "Service temporarily unavailable, try again in a few minutes."
+
+---
+
+### Image Generation Failed (Partial Success)
+
+Scene completes without image.
+
+```json
+{
+  "status": "completed",
+  "has_image": false,
+  "error_message": "Image generation failed: all providers exhausted. Scene completed without image."
+}
+```
+
+**Why this happens:**
+- Image providers (Google Imagen → OpenRouter Flux → Pollinations.ai) all failed
+- Pollinations.ai is the ultimate fallback and never fails, so this is rare
+
+**Client action:** Show scene without image, offer to retry image generation.
+
+---
+
+## Authentication Error Reference
+
+### Missing Authorization Header
+
+```json
+{
+  "detail": "Missing or invalid Authorization header"
+}
+```
+
+**Cause:** No `Authorization` header or doesn't start with `"Bearer "`.
+
+---
+
+### Invalid JWT
+
+```json
+{
+  "detail": "Invalid token signature"
+}
+```
+
+**Cause:** Token signature verification failed (wrong `JWT_SECRET_KEY` or token tampered with).
+
+---
+
+### Expired JWT
+
+```json
+{
+  "detail": "Token expired"
+}
+```
+
+**Cause:** Access token older than 15 minutes (configurable via `JWT_ACCESS_EXPIRE_MINUTES`).
+
+---
+
+### User Not Found or Deactivated
+
+```json
+{
+  "detail": "User not found or deactivated"
+}
+```
+
+**Cause:** User called `DELETE /auth/account` (soft-delete) or was manually deactivated.
+
+---
+
+## Debugging Tips
+
+### Enable Debug Mode
+
+Set `DEBUG=true` in environment to get detailed error messages:
+
+```bash
+export DEBUG=true
+```
+
+Production should always use `DEBUG=false` to avoid leaking internal details.
+
+---
+
+### Check Health Endpoint
+
+Verify service status:
+
+```bash
+curl https://your-app.railway.app/health
+```
+
+```json
+{
+  "status": "healthy",
+  "version": "2.4.0",
+  "database": true,
+  "providers": {
+    "google": true,
+    "openrouter": true
+  }
+}
+```
+
+**Degraded status:**
+
+```json
+{
+  "status": "degraded",
+  "database": false,
+  "providers": {
+    "google": false,
+    "openrouter": true
+  }
+}
+```
+
+---
+
+### Inspect Response Headers
+
+Useful for debugging auth and rate limiting:
+
+```bash
+curl -i https://your-app.railway.app/api/v1/timepoints/123
+```
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer
+Content-Type: application/json
+
+{"detail": "Token expired"}
+```
+
+---
+
+## Related Documentation
+
+- [Authentication](/api/authentication) — JWT flow and token management
+- [Credits](/api/credits) — Credit system and costs
+- [iOS Client](/api/ios-client) — iOS-specific error handling
+- [SSE Streaming](/api/streaming) — Streaming error events

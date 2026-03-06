@@ -1,0 +1,345 @@
+---
+title: Environment Variables
+description: Complete reference for configuring TIMEPOINT Flash with environment variables
+---
+
+TIMEPOINT Flash uses environment variables for all configuration. Settings are loaded from `.env` files using `pydantic-settings`.
+
+## Quick Start
+
+Copy `.env.example` to `.env` and configure at least one LLM provider:
+
+```bash
+cp .env.example .env
+# Edit .env and add your GOOGLE_API_KEY or OPENROUTER_API_KEY
+```
+
+## LLM Provider Configuration
+
+<Note>
+At least one provider API key is required for the application to function.
+</Note>
+
+<ParamField path="GOOGLE_API_KEY" type="string" required>
+  Google AI API key for Gemini models (text and image generation).
+  
+  Get your key at [Google AI Studio](https://aistudio.google.com/apikey).
+  
+  **Required for:** HD preset, Balanced preset, image generation
+</ParamField>
+
+<ParamField path="OPENROUTER_API_KEY" type="string">
+  OpenRouter API key for multi-model access.
+  
+  Get your key at [OpenRouter](https://openrouter.ai/keys).
+  
+  **Required for:** Hyper preset, Gemini 3 preset
+  
+  **Default:** Not required unless using OpenRouter-specific presets
+</ParamField>
+
+## Database Configuration
+
+<ParamField path="DATABASE_URL" type="string" default="sqlite+aiosqlite:///./timepoint.db">
+  Database connection string. Supports SQLite and PostgreSQL.
+  
+  **Examples:**
+  ```bash
+  # SQLite (default, local development)
+  DATABASE_URL=sqlite+aiosqlite:///./timepoint.db
+  
+  # PostgreSQL (production)
+  DATABASE_URL=postgresql+asyncpg://user:pass@localhost/timepoint
+  ```
+  
+  <Note>
+  The validator automatically converts `postgres://` and `postgresql://` to `postgresql+asyncpg://` for async compatibility.
+  </Note>
+</ParamField>
+
+## Authentication Configuration
+
+<ParamField path="AUTH_ENABLED" type="boolean" default="false">
+  Feature flag for JWT authentication. Set to `true` for iOS app mode.
+  
+  - `false`: Open access (no authentication required)
+  - `true`: Require JWT Bearer tokens for all protected endpoints
+  
+  **When to enable:** Production deployments, iOS app integration
+</ParamField>
+
+<ParamField path="JWT_SECRET_KEY" type="string" default="change-me-to-a-random-32-char-string">
+  HS256 signing key for access tokens.
+  
+  <Warning>
+  **Security:** Generate a random 32+ character string in production. Never commit this to version control.
+  </Warning>
+  
+  **Generate a secure key:**
+  ```bash
+  python -c "import secrets; print(secrets.token_urlsafe(32))"
+  ```
+</ParamField>
+
+<ParamField path="JWT_ACCESS_EXPIRE_MINUTES" type="integer" default="15">
+  Access token lifetime in minutes.
+  
+  **Recommended:** 15 minutes (short-lived for security)
+</ParamField>
+
+<ParamField path="JWT_REFRESH_EXPIRE_DAYS" type="integer" default="30">
+  Refresh token lifetime in days.
+  
+  **Recommended:** 30 days (allows long-term sessions without re-authentication)
+</ParamField>
+
+<ParamField path="APPLE_BUNDLE_ID" type="string">
+  iOS app bundle ID for Apple Sign-In token validation.
+  
+  **Required when:** `AUTH_ENABLED=true` and using Apple Sign-In
+  
+  **Example:** `com.yourcompany.timepoint`
+</ParamField>
+
+<ParamField path="ADMIN_API_KEY" type="string" default="">
+  Secret key for admin endpoints (dev token creation, credit grants).
+  
+  **Empty = disabled** (admin endpoints return 403)
+  
+  **Admin endpoints:**
+  - `POST /api/v1/auth/dev/token` - Create test user and get JWTs
+  - `POST /api/v1/credits/admin/grant` - Grant credits to any user
+  
+  **Security:** Only set this in development/staging environments.
+</ParamField>
+
+## Service-to-Service Authentication
+
+<ParamField path="FLASH_SERVICE_KEY" type="string" default="">
+  Shared secret for service-to-service authentication via `X-Service-Key` header.
+  
+  **Empty = open access** (no service key required)
+  
+  **Used by:** `/api/v1/users/resolve` endpoint for external service user lookups
+</ParamField>
+
+## Credit System Configuration
+
+<ParamField path="SIGNUP_CREDITS" type="integer" default="50">
+  Free credits granted on first sign-in.
+  
+  **Default cost reference:**
+  - 50 credits = 5-10 timepoint generations
+  - 50 chat interactions
+  - 25 temporal jumps
+</ParamField>
+
+<ParamField path="BILLING_ENABLED" type="boolean" default="false">
+  Set automatically when `timepoint-billing` module is installed.
+  
+  **Do not set manually.** This flag is controlled by the billing module presence.
+</ParamField>
+
+## Application Configuration
+
+<ParamField path="ENVIRONMENT" type="enum" default="development">
+  Application environment.
+  
+  **Options:**
+  - `development` - Local development
+  - `staging` - Staging environment
+  - `production` - Production environment
+  
+  **Effects:**
+  - Logging verbosity
+  - Error detail exposure
+  - CORS configuration
+</ParamField>
+
+<ParamField path="DEBUG" type="boolean" default="true">
+  Enable debug mode.
+  
+  **When enabled:**
+  - `/docs` Swagger UI available
+  - `/redoc` API documentation available
+  - Verbose error messages
+  
+  **Production:** Set to `false`
+</ParamField>
+
+<ParamField path="RATE_LIMIT" type="integer" default="60">
+  API rate limit in requests per minute per IP.
+  
+  **Default:** 60 requests/minute
+  
+  **Production tuning:** Adjust based on expected traffic and infrastructure capacity
+</ParamField>
+
+## CORS Configuration
+
+<ParamField path="CORS_ENABLED" type="boolean" default="true">
+  Enable CORS middleware.
+  
+  **When to disable:** Flash is internal-only with no browser callers
+  
+  **Default:** `true` (allows browser-based clients)
+</ParamField>
+
+<ParamField path="CORS_ORIGINS" type="string" default="">
+  Comma-separated additional CORS origins.
+  
+  **Example:**
+  ```bash
+  CORS_ORIGINS=https://your-app.up.railway.app,https://timepoint.example.com
+  ```
+  
+  **Default origins always allowed:**
+  - `http://localhost:3000`
+  - `http://localhost:5173`
+  - `http://127.0.0.1:3000`
+</ParamField>
+
+## Blob Storage Configuration
+
+<ParamField path="BLOB_STORAGE_ENABLED" type="boolean" default="false">
+  Enable blob storage for timepoint assets (images, metadata JSON).
+  
+  **When enabled:** Creates organized directory structure per generation
+  
+  **Use case:** Archival, offline access, content pipeline integration
+</ParamField>
+
+<ParamField path="BLOB_STORAGE_ROOT" type="string" default="./output/timepoints">
+  Root directory for blob storage output.
+  
+  **Directory structure:**
+  ```
+  {BLOB_STORAGE_ROOT}/
+  └── {timepoint_id}/
+      ├── metadata.json
+      ├── scene.jpg
+      └── thumbnail.jpg
+  ```
+</ParamField>
+
+## Sharing Configuration
+
+<ParamField path="SHARE_URL_BASE" type="string" default="">
+  Base URL for share links.
+  
+  **Example:** `https://timepointai.com/t`
+  
+  **Generated share URL format:** `{SHARE_URL_BASE}/{slug}`
+  
+  **Empty = no share_url** in API responses
+</ParamField>
+
+## Observability Configuration
+
+<ParamField path="LOGFIRE_TOKEN" type="string">
+  Logfire token for observability and monitoring.
+  
+  **Optional.** When set, enables:
+  - Structured logging
+  - Performance tracing
+  - Error tracking
+  
+  Get your token at [Logfire](https://logfire.pydantic.dev/)
+</ParamField>
+
+## Pipeline Configuration
+
+<ParamField path="PIPELINE_MAX_PARALLELISM" type="integer" default="3">
+  Maximum parallel LLM calls in pipeline execution.
+  
+  **Range:** 1-5
+  
+  **Tuning guide:**
+  - 1: Sequential execution (safest for debugging, rate limits)
+  - 3: Default balanced parallelism
+  - 5: Maximum speed (requires good provider rate limits)
+  
+  <Note>
+  This setting is overridden by quality preset parallelism modes. See [Quality Presets](/concepts/quality-presets) for details.
+  </Note>
+</ParamField>
+
+## Configuration Validation
+
+The application validates configuration at startup:
+
+```python
+from app.config import settings
+
+# Check if any provider is configured
+if not settings.has_any_provider:
+    print("Warning: No LLM provider API keys configured")
+
+# Check specific provider
+if settings.has_provider(ProviderType.GOOGLE):
+    print("Google provider available")
+
+# Get detected primary provider
+print(f"Primary provider: {settings.detected_provider}")
+```
+
+## Environment File Examples
+
+### Minimal Development
+
+```bash title=".env"
+# Minimal config for local development
+GOOGLE_API_KEY=your_google_api_key_here
+DATABASE_URL=sqlite+aiosqlite:///./timepoint.db
+AUTH_ENABLED=false
+```
+
+### iOS App Production
+
+```bash title=".env"
+# Production config for iOS app
+GOOGLE_API_KEY=your_google_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+DATABASE_URL=postgresql+asyncpg://user:pass@db.example.com/timepoint
+
+# Auth
+AUTH_ENABLED=true
+JWT_SECRET_KEY=your_random_32_char_secret_here
+APPLE_BUNDLE_ID=com.yourcompany.timepoint
+SIGNUP_CREDITS=50
+
+# Application
+ENVIRONMENT=production
+DEBUG=false
+RATE_LIMIT=60
+
+# Sharing
+SHARE_URL_BASE=https://timepointai.com/t
+
+# Observability
+LOGFIRE_TOKEN=your_logfire_token_here
+```
+
+### Testing Environment
+
+```bash title=".env"
+# Testing config with admin access
+GOOGLE_API_KEY=your_google_api_key_here
+DATABASE_URL=sqlite+aiosqlite:///./test.db
+
+# Auth (enabled for testing)
+AUTH_ENABLED=true
+JWT_SECRET_KEY=test_secret_key_change_in_production
+APPLE_BUNDLE_ID=com.yourcompany.timepoint.test
+ADMIN_API_KEY=test_admin_key_12345
+
+# Application
+ENVIRONMENT=staging
+DEBUG=true
+```
+
+## Related Documentation
+
+- [Authentication](/configuration/authentication) - JWT and Apple Sign-In setup
+- [Credits](/configuration/credits) - Credit system configuration
+- [Quality Presets](/concepts/quality-presets) - Model and parallelism configuration

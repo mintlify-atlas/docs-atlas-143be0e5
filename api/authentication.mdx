@@ -1,0 +1,352 @@
+---
+title: Authentication
+description: Authentication methods for TIMEPOINT Flash API
+---
+
+## Overview
+
+TIMEPOINT Flash supports multiple authentication methods depending on your use case:
+
+- **Bearer JWT**: For direct user authentication (iOS app, web clients)
+- **Service Key**: For service-to-service communication
+- **Admin Key**: For administrative operations (credit grants, dev tokens)
+- **Open Access**: When authentication is disabled (`AUTH_ENABLED=false`)
+
+## Bearer JWT Authentication
+
+### How It Works
+
+Users authenticate via Apple Sign-In and receive a JWT access token and refresh token:
+
+1. **Sign In**: Client sends Apple identity token to `/api/v1/auth/apple`
+2. **Token Pair**: Server returns access token (15 minutes) and refresh token (30 days)
+3. **Access**: Client includes access token in `Authorization` header
+4. **Refresh**: Before expiry, client rotates tokens via `/api/v1/auth/refresh`
+
+### Sign In with Apple
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/apple \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identity_token": "eyJhbGciOiJSUzI1NiIs..."
+  }'
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "abc123...",
+  "token_type": "bearer",
+  "expires_in": 900
+}
+```
+
+<Note>
+On first sign-in, the server creates a new user account and grants signup credits (default: 50 credits).
+</Note>
+
+### Using the Access Token
+
+Include the access token in the `Authorization` header:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Apollo 11 moon landing July 20 1969",
+    "preset": "balanced"
+  }'
+```
+
+### Token Refresh
+
+Access tokens expire after 15 minutes. Refresh them before expiry:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "abc123..."
+  }'
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "def456...",
+  "token_type": "bearer",
+  "expires_in": 900
+}
+```
+
+<Warning>
+The old refresh token is revoked when you rotate. Store the new refresh token securely.
+</Warning>
+
+### Get Current User
+
+Retrieve the authenticated user's profile:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+```json Response
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "display_name": null,
+  "created_at": "2026-02-09T12:00:00Z"
+}
+```
+
+### Logout
+
+Revoke a refresh token to log out:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/logout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "abc123..."
+  }'
+```
+
+```json Response
+{
+  "detail": "Logged out"
+}
+```
+
+### Account Deletion
+
+Soft-delete user account (App Store requirement):
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/auth/account \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+<Note>
+Account deletion sets `is_active=false` and revokes all refresh tokens. Data is retained for ledger integrity.
+</Note>
+
+## Service Key Authentication
+
+For service-to-service communication (e.g., billing service, clockchain).
+
+### How It Works
+
+Three authentication paths are evaluated in order:
+
+| Priority | Headers | Behavior | Use Case |
+|----------|---------|----------|----------|
+| 1 | `X-Service-Key` + `X-User-ID` | Validates key, looks up user | Billing relays user requests |
+| 2 | `X-Service-Key` only | Validates key, no user context | System calls (unmetered) |
+| 3 | `Authorization: Bearer` | JWT validation | Direct user auth |
+
+### Service Key with User Context
+
+Billing service relaying a user's request:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "X-Service-Key: your-flash-service-key" \
+  -H "X-User-ID: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Caesar assassination Ides of March 44 BC",
+    "preset": "hyper"
+  }'
+```
+
+<Tip>
+`X-User-ID` can be a UUID or an `external_id` (e.g., Auth0 sub). Credits are deducted from the specified user.
+</Tip>
+
+### Service Key without User
+
+System calls that are unmetered:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/models/free \
+  -H "X-Service-Key: your-flash-service-key"
+```
+
+### User Resolution Endpoint
+
+Find or create a user by `external_id` (service-key protected):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/users/resolve \
+  -H "X-Service-Key: your-flash-service-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "external_id": "auth0|abc123",
+    "email": "user@example.com",
+    "display_name": "Jane Doe"
+  }'
+```
+
+```json Response
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "created": true
+}
+```
+
+## Admin Key Authentication
+
+For administrative operations that require elevated privileges.
+
+### Admin Endpoints
+
+The following endpoints require `X-Admin-Key` header:
+
+- `POST /api/v1/auth/dev/token` - Create test users
+- `POST /api/v1/credits/admin/grant` - Grant credits to any user
+
+### Create Dev Token
+
+Create a test user for development:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/dev/token \
+  -H "X-Admin-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "display_name": "Test User"
+  }'
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "abc123...",
+  "token_type": "bearer",
+  "expires_in": 900
+}
+```
+
+### Grant Credits
+
+Grant credits to any user (admin only):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/credits/admin/grant \
+  -H "X-Admin-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "amount": 100,
+    "transaction_type": "stripe_purchase",
+    "description": "Stripe purchase: 100 credits ($9.99)"
+  }'
+```
+
+```json Response
+{
+  "balance": 150,
+  "granted": 100
+}
+```
+
+## Open Access Mode
+
+When `AUTH_ENABLED=false` and no service key is configured:
+
+- All endpoints are accessible without authentication
+- No credits are deducted
+- User context is optional
+- Suitable for development and testing
+
+<Warning>
+**Never use open access mode in production**. Always enable authentication for public deployments.
+</Warning>
+
+## Environment Configuration
+
+Configure authentication via environment variables:
+
+```bash .env
+# Enable/disable authentication
+AUTH_ENABLED=true
+
+# JWT configuration
+JWT_SECRET=your-secret-key-here
+JWT_ALGORITHM=HS256
+JWT_ACCESS_EXPIRE_MINUTES=15
+JWT_REFRESH_EXPIRE_DAYS=30
+
+# Service keys
+FLASH_SERVICE_KEY=your-flash-service-key
+ADMIN_API_KEY=your-admin-key
+
+# Apple Sign-In (optional)
+APPLE_TEAM_ID=ABC123
+APPLE_KEY_ID=DEF456
+APPLE_PRIVATE_KEY_PATH=/path/to/key.p8
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Token Storage">
+    - Store access tokens in memory only (don't persist)
+    - Store refresh tokens in secure storage (Keychain on iOS)
+    - Never log or transmit tokens in plain text
+  </Accordion>
+  
+  <Accordion title="Token Rotation">
+    - Refresh access tokens before expiry (check `expires_in`)
+    - Implement exponential backoff for failed refresh attempts
+    - Handle 401 errors by refreshing and retrying once
+  </Accordion>
+  
+  <Accordion title="Service Keys">
+    - Rotate service keys periodically
+    - Use different keys for different environments
+    - Never commit keys to version control
+  </Accordion>
+  
+  <Accordion title="HTTPS">
+    - Always use HTTPS in production
+    - Validate SSL certificates
+    - Pin certificates for mobile apps
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+| Status Code | Meaning | Action |
+|-------------|---------|--------|
+| `401` | Invalid or expired token | Refresh access token and retry |
+| `403` | Forbidden (invalid service key) | Check service key configuration |
+| `404` | User not found | Verify user ID or create user |
+
+## Demo Sign-In
+
+For App Store reviewers and simulator testing:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/demo
+```
+
+<Note>
+Demo sign-in is rate-limited to 10 requests per minute per IP address.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rate Limits" icon="gauge" href="/api/rate-limits">
+    Learn about rate limiting strategies
+  </Card>
+  <Card title="Credits System" icon="coins" href="/api/endpoints/credits">
+    Understand credit costs and management
+  </Card>
+</CardGroup>

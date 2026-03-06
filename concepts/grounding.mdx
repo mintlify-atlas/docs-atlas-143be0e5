@@ -1,0 +1,374 @@
+---
+title: 'Grounding Agent'
+description: 'Google Search verification for historical accuracy'
+---
+
+The **Grounding Agent** uses Google Search to verify historical facts before generation. This prevents hallucinations like placing the Deep Blue chess match in an "IBM server room" when it was actually held in a theater.
+
+## Why Grounding?
+
+Large language models can hallucinate plausible-sounding but incorrect details about historical events. Grounding solves this by:
+
+1. **Searching Google** for verified facts about the event
+2. **Extracting structured data** from search results
+3. **Passing verified context** to downstream agents
+4. **Preventing visual errors** by identifying physical presence
+
+<Info>
+Grounding uses Gemini's built-in Google Search integration, which provides real-time access to verified information with source citations.
+</Info>
+
+## When Grounding is Triggered
+
+Grounding runs **only for historical queries** detected by the Judge agent:
+
+```python
+class GroundingInput:
+    def needs_grounding(self) -> bool:
+        """Grounding is triggered when query type is HISTORICAL."""
+        return self.query_type == QueryType.HISTORICAL
+```
+
+**Location:** `app/agents/grounding.py:62`
+
+### Triggered
+
+<Check>**Historical events** — "Deep Blue defeats Kasparov 1997"</Check>
+<Check>**Historical figures** — "Caesar crosses the Rubicon"</Check>
+<Check>**Specific known events** — "Trinity test July 16 1945"</Check>
+
+### Skipped
+
+<X>**Generic period scenes** — "Roman gladiator in arena"</X>
+<X>**Fictional events** — "Red Wedding from Game of Thrones"</X>
+<X>**Speculative scenarios** — "What if Napoleon won at Waterloo"</X>
+
+<Note>
+Generic period queries skip grounding because they don't require verification of specific facts. The LLM's training data is sufficient for plausible period details.
+</Note>
+
+## What Gets Verified
+
+The Grounding agent produces a `GroundedContext` with 9 types of verified data:
+
+```python
+class GroundedContext(BaseModel):
+    # Location verification
+    verified_location: str       # "Equitable Center, 35th floor, Manhattan"
+    venue_description: str       # "Theater-style room with raised seating"
+
+    # Date verification
+    verified_date: str           # "May 11, 1997"
+    verified_year: int           # 1997
+
+    # Participant verification
+    verified_participants: list[str]  # ["Garry Kasparov", "Feng-hsiung Hsu", ...]
+
+    # Physical presence (critical for image generation)
+    physical_participants: list[str]  # ["Kasparov sitting at chess board", ...]
+    entity_representations: list[str] # ["Deep Blue: IBM operator relaying moves"]
+
+    # Event mechanics
+    event_mechanics: str         # How the event physically worked
+    visible_technology: str      # Period-accurate equipment descriptions
+    photographic_reality: str    # What a photograph would actually show
+
+    # Context
+    historical_context: str      # Significance of the event
+    source_citations: list[str]  # URLs from Google Search
+    grounding_confidence: float  # 0.0-1.0
+```
+
+**Location:** `app/agents/grounding.py:74`
+
+### Example: Deep Blue vs. Kasparov
+
+<CodeGroup>
+```json Grounded Context
+{
+  "verified_location": "Equitable Center, 35th floor, Manhattan, New York City",
+  "venue_description": "Theater-style room with raised seating for press and spectators. Playing table in center with chairs facing each other.",
+  "verified_date": "May 11, 1997",
+  "verified_year": 1997,
+  "verified_participants": [
+    "Garry Kasparov",
+    "Feng-hsiung Hsu",
+    "Murray Campbell",
+    "Joe Hoane",
+    "Jerry Brody"
+  ],
+  "physical_participants": [
+    "Garry Kasparov - sitting at chess board on left side, facing opponent",
+    "IBM team operator - sitting across from Kasparov, making Deep Blue's moves on the board",
+    "Arbiter - standing beside the table observing",
+    "Press and spectators - seated in raised theater seating behind playing area"
+  ],
+  "entity_representations": [
+    "Deep Blue: IBM operator sitting across from Kasparov, relaying the computer's moves to the board. The actual computer (IBM RS/6000 SP2 racks) was in a separate room."
+  ],
+  "event_mechanics": "Deep Blue computed moves in a separate room. An IBM team member sat across from Kasparov and physically made Deep Blue's moves on the board after receiving them electronically. Kasparov made his own moves.",
+  "visible_technology": "CRT monitors displaying game state, bulky 1990s computers with beige cases, thick cables. The Deep Blue supercomputer itself (IBM RS/6000 SP2 racks) was NOT visible at the playing table - it was in another room.",
+  "photographic_reality": "A photograph would show Kasparov facing a human operator across a chess board in a theater-style room. You would NOT see the Deep Blue computer itself - only monitors and the operator making moves.",
+  "historical_context": "First defeat of a reigning world chess champion by a computer under tournament conditions. Marked a milestone in artificial intelligence development.",
+  "source_citations": [
+    "https://www.ibm.com/ibm/history/exhibits/vintage/vintage_4506VV2689.html",
+    "https://en.wikipedia.org/wiki/Deep_Blue_versus_Garry_Kasparov"
+  ],
+  "grounding_confidence": 0.95
+}
+```
+
+```json Without Grounding (Hallucinated)
+{
+  "location": "IBM research laboratory server room",
+  "venue_description": "Kasparov facing a massive blue supercomputer",
+  "visible_technology": "The Deep Blue computer with blinking lights"
+}
+```
+</CodeGroup>
+
+<Warning>
+**Without grounding**, the LLM might show Kasparov facing the computer directly, but **with grounding** we correctly show him facing a human operator who relays moves.
+</Warning>
+
+## Physical Presence Handling
+
+The most critical grounding feature is **physical presence verification** — identifying WHO was literally visible in photographs.
+
+### Non-Human Entities
+
+Non-human entities (computers, AI, organizations) can't appear in images. The grounding agent discovers WHO represented them:
+
+| Entity | Physical Representation |
+|--------|------------------------|
+| Deep Blue | IBM operator sitting across from Kasparov |
+| "The Government" | The official who signed the document |
+| HAL 9000 | Red camera lens on the wall |
+| Soviet Union | Soviet officials in dark suits |
+| "The Senate" | Senators seated in semicircle |
+
+### Why This Matters for Images
+
+Image generation models can't render abstract concepts. The grounding agent ensures:
+
+<Check>Images show **people** where people were present</Check>
+<Check>Technology is **period-accurate** (CRT monitors in 1997, not LCD)</Check>
+<Check>Equipment is **positioned correctly** (separate room vs. on table)</Check>
+<Check>Visual representations are **photographically realistic**</Check>
+
+## Two-Step Grounding Process
+
+Grounding uses a two-step process because Google Search and structured output can't be used simultaneously:
+
+<Steps>
+  <Step title="Step 1: Search & Retrieve">
+    Call Gemini with Google Search grounding enabled to get verified facts as raw text:
+    
+    ```python
+    grounded_response = await self.google_provider.call_text_grounded(
+        prompt=full_prompt,
+        model="gemini-2.5-flash",
+        temperature=0.2,  # Low for factual accuracy
+    )
+    ```
+    
+    Returns: Unstructured text with search results and citations
+  </Step>
+  
+  <Step title="Step 2: Parse to Structured Data">
+    Parse the grounded text into structured `GroundedContext`:
+    
+    ```python
+    parsed_response = await self.google_provider.call_text(
+        prompt=PARSING_PROMPT.format(grounded_text=grounded_text),
+        model="gemini-2.5-flash",
+        response_model=GroundedContext,
+        temperature=0.1,  # Very low for parsing accuracy
+    )
+    ```
+    
+    Returns: Structured `GroundedContext` object
+  </Step>
+</Steps>
+
+**Location:** `app/agents/grounding.py:370`
+
+## Common Misconceptions Prevented
+
+Grounding corrects these frequent LLM hallucinations:
+
+<AccordionGroup>
+<Accordion title="Chess vs Computer" icon="chess">
+**Misconception:** Kasparov faced the Deep Blue computer directly
+
+**Reality:** Human operators sat across from players, not machines. The computer was in a separate room.
+
+**Grounded:** "IBM operator sitting across from Kasparov, relaying moves"
+</Accordion>
+
+<Accordion title="1990s Technology" icon="desktop">
+**Misconception:** Modern flat-screen monitors and sleek computers
+
+**Reality:** Bulky CRT monitors, beige computers, thick cables, rack-mounted servers
+
+**Grounded:** "CRT monitors displaying game state, bulky IBM RS/6000 SP2 rack cabinets in separate room"
+</Accordion>
+
+<Accordion title="Battle Formations" icon="shield">
+**Misconception:** Generic medieval battle scenes with mixed armor styles
+
+**Reality:** Specific armor types, weapons, and formations for the exact period and location
+
+**Grounded:** "Roman legionaries in segmented plate armor (lorica segmentata), rectangular shields (scutum), gladius swords, testudo formation"
+</Accordion>
+
+<Accordion title="Signing Ceremonies" icon="pen">
+**Misconception:** Modern pens and paper on generic tables
+
+**Reality:** Period-specific writing implements, document types, furniture, and ceremonial details
+
+**Grounded:** "Quill pens, parchment scrolls, wax seals, ornate wooden desks with candelabras"
+</Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+Grounding failures are **non-fatal** — the pipeline continues without verified facts:
+
+```python
+if result.success and result.content:
+    state.grounded_context = result.content
+    logger.info(f"Grounding: verified location='{result.content.verified_location}'")
+else:
+    # Grounding failure is non-fatal - log warning and continue
+    logger.warning(f"Grounding failed: {result.error}")
+    # Pipeline continues using LLM knowledge instead
+```
+
+**Location:** `app/core/pipeline.py:1005`
+
+### Why Non-Fatal?
+
+1. **Google Search might fail** — API errors, rate limits, no results
+2. **Some events lack documentation** — Rare historical events may not have search results
+3. **Text content still valuable** — User gets scene, characters, dialog even without verified facts
+
+<Warning>
+When grounding fails, image quality may suffer because physical presence can't be verified. The LLM may revert to common misconceptions.
+</Warning>
+
+## Downstream Usage
+
+Grounded context flows to multiple agents:
+
+```python
+# Timeline agent uses verified dates
+timeline_input = TimelineInput.from_judge_result(
+    query, judge_result,
+    grounded_context=state.grounded_context  # <-- Verified date/year
+)
+
+# Scene agent uses verified venue details
+scene_input = SceneInput.from_timeline(
+    query, timeline_data,
+    grounded_context=state.grounded_context  # <-- Venue description, setting
+)
+
+# Characters agent uses verified participants
+char_input = CharacterIdentificationInput.from_data(
+    query, timeline, scene,
+    grounded_context=state.grounded_context  # <-- Physical participants, entities
+)
+
+# Image prompt uses ALL grounded facts
+image_prompt_input = ImagePromptInput(
+    ...,
+    grounded_context=state.grounded_context  # <-- Full verified context
+)
+```
+
+## Configuration
+
+Grounding requires a Google API key:
+
+```bash
+GOOGLE_API_KEY=your_key_here
+```
+
+The agent automatically uses Gemini 2.5 Flash with Google Search grounding:
+
+```python
+class GroundingAgent(BaseAgent):
+    def __init__(self, router: LLMRouter | None = None):
+        super().__init__(router=router, name="GroundingAgent")
+        self._google_provider = GoogleProvider(api_key=settings.GOOGLE_API_KEY)
+```
+
+**Location:** `app/agents/grounding.py:329`
+
+## Performance
+
+- **Latency:** ~2-4 seconds (two API calls: search + parsing)
+- **Cost:** 2x Gemini 2.5 Flash calls (search is same price as regular call)
+- **Accuracy:** 95%+ confidence for well-documented events
+- **Coverage:** Works for any event with Google Search results
+
+## Example Prompt
+
+The grounding prompt emphasizes physical presence:
+
+```markdown
+Research this historical event/person and provide VERIFIED facts:
+
+QUERY: Deep Blue defeats Kasparov 1997
+DETECTED FIGURES: Garry Kasparov
+APPROXIMATE YEAR: 1997
+
+Find and verify:
+1. EXACT location (building name, floor, room type, city)
+2. EXACT date (month, day, year)
+3. WHO was actually there (named individuals, including operators, assistants)
+4. WHAT the setting looked like (decor, layout, lighting)
+5. Historical context and significance
+6. HOW did this event physically work?
+   - What was the physical setup/mechanics?
+   - Who interacted with whom directly?
+   - Where was any equipment/machinery located (same room or separate)?
+7. WHAT technology or equipment was visible?
+   - Describe appearance: size, color, style appropriate to the era
+   - What would a photograph of this scene actually show?
+
+=== CRITICAL: PHYSICAL PRESENCE FOR IMAGE GENERATION ===
+
+8. WHO was PHYSICALLY VISIBLE in photographs of this event?
+   - List each person WITH THEIR POSITION
+   - Example: "IBM operator sitting across from Kasparov, making moves"
+
+9. For any NON-HUMAN entities (computers, AI, organizations):
+   - WHO was their HUMAN REPRESENTATIVE that would appear in photos?
+   - Example: "Deep Blue" -> "IBM operator relaying moves"
+   - HOW should this entity be visually depicted in an image?
+
+Use Google Search to find accurate information.
+Search for photographs and primary sources when possible.
+Cite your sources.
+```
+
+**Location:** `app/agents/grounding.py:200`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agents Overview" icon="robot" href="/concepts/agents">
+    Learn about all 15 agents
+  </Card>
+  <Card title="Pipeline Execution" icon="diagram-next" href="/concepts/pipeline">
+    See how grounding fits in the pipeline
+  </Card>
+  <Card title="Configuration" icon="gear" href="/quickstart/configuration">
+    Set up Google API key
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/generation/create">
+    Use grounding via API
+  </Card>
+</CardGroup>

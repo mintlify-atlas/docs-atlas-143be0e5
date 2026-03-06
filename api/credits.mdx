@@ -1,0 +1,261 @@
+---
+title: 'Credits'
+description: 'Credit balance, transaction history, and cost table'
+---
+
+Credit endpoints manage user credit balances and provide transaction history.
+
+<Note>
+All credit operations require Bearer JWT when `AUTH_ENABLED=true`.
+</Note>
+
+## GET /api/v1/credits/balance
+
+Get current credit balance for authenticated user.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Response
+
+<ResponseField name="balance" type="integer">
+  Current credit balance
+</ResponseField>
+
+<ResponseField name="lifetime_earned" type="integer">
+  Total credits earned (signups, purchases)
+</ResponseField>
+
+<ResponseField name="lifetime_spent" type="integer">
+  Total credits spent
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/credits/balance \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "balance": 45,
+  "lifetime_earned": 50,
+  "lifetime_spent": 5
+}
+```
+
+---
+
+## GET /api/v1/credits/history
+
+Paginated transaction ledger for authenticated user.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="20">
+  Number of transactions to return (1-100)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Offset for pagination
+</ParamField>
+
+### Response
+
+Returns array of transactions:
+
+<ResponseField name="amount" type="integer">
+  Credit amount (negative for spend, positive for grant)
+</ResponseField>
+
+<ResponseField name="balance_after" type="integer">
+  Balance after this transaction
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Transaction type: `generation`, `chat`, `temporal`, `signup_bonus`, `stripe_purchase`, `apple_iap`, `admin_grant`
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Human-readable description
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+### Example
+
+```bash
+curl "http://localhost:8000/api/v1/credits/history?limit=10&offset=0" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+[
+  {
+    "amount": -5,
+    "balance_after": 45,
+    "type": "generation",
+    "description": "Scene generation (balanced)",
+    "created_at": "2026-02-09T12:00:00Z"
+  },
+  {
+    "amount": 50,
+    "balance_after": 50,
+    "type": "signup_bonus",
+    "description": "Welcome bonus",
+    "created_at": "2026-02-09T11:45:00Z"
+  }
+]
+```
+
+---
+
+## POST /api/v1/credits/admin/grant
+
+**Admin only.** Grant credits to any user by user ID.
+
+### Authentication
+
+Requires `X-Admin-Key` header matching `ADMIN_API_KEY` env var.
+
+### Request Body
+
+<ParamField body="user_id" type="string" required>
+  Target user UUID
+</ParamField>
+
+<ParamField body="amount" type="integer" required>
+  Credits to grant (must be > 0)
+</ParamField>
+
+<ParamField body="transaction_type" type="string" default="admin_grant">
+  Ledger transaction type:
+  - `admin_grant`
+  - `apple_iap`
+  - `stripe_purchase`
+  - `subscription_grant`
+  - `refund`
+  - `signup_bonus`
+</ParamField>
+
+<ParamField body="description" type="string" default="Manual top-up">
+  Ledger note
+</ParamField>
+
+### Response
+
+<ResponseField name="balance" type="integer">
+  New credit balance
+</ResponseField>
+
+<ResponseField name="granted" type="integer">
+  Credits granted
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/credits/admin/grant \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: your-admin-key" \
+  -d '{
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "amount": 100,
+    "transaction_type": "stripe_purchase",
+    "description": "Stripe purchase: 100 credits ($9.99)"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "balance": 150,
+  "granted": 100
+}
+```
+
+<Warning>
+Returns 403 if `X-Admin-Key` is missing, wrong, or `ADMIN_API_KEY` is not set.
+</Warning>
+
+---
+
+## GET /api/v1/credits/costs
+
+Credit cost table. **No authentication required.**
+
+### Response
+
+<ResponseField name="costs" type="object">
+  Map of operation names to credit costs
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/credits/costs
+```
+
+**Response:**
+
+```json
+{
+  "costs": {
+    "generate_balanced": 5,
+    "generate_hd": 10,
+    "generate_hyper": 5,
+    "generate_gemini3": 5,
+    "chat": 1,
+    "temporal_jump": 2
+  }
+}
+```
+
+---
+
+## Credit Costs Summary
+
+| Operation | Cost | Endpoint |
+|-----------|------|----------|
+| Scene generation (balanced) | 5 credits | `POST /api/v1/timepoints/generate/*` |
+| Scene generation (hyper) | 5 credits | `POST /api/v1/timepoints/generate/*` |
+| Scene generation (hd) | 10 credits | `POST /api/v1/timepoints/generate/*` |
+| Scene generation (gemini3) | 5 credits | `POST /api/v1/timepoints/generate/*` |
+| Character chat | 1 credit | `POST /api/v1/interactions/{id}/chat` |
+| Dialog extension | 1 credit | `POST /api/v1/interactions/{id}/dialog` |
+| Character survey | 1 credit | `POST /api/v1/interactions/{id}/survey` |
+| Temporal jump (next/prior) | 2 credits | `POST /api/v1/temporal/{id}/next` |
+
+---
+
+## Signup Credits
+
+New users automatically receive **50 credits** on first sign-in:
+
+- Apple Sign-In: `POST /api/v1/auth/apple`
+- Dev token: `POST /api/v1/auth/dev/token`
+- Demo account: `POST /api/v1/auth/demo`
+
+---
+
+## Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 401 | Authentication required |
+| 402 | Payment Required — insufficient credits |
+| 403 | Invalid admin key |
+| 404 | User or credit account not found |

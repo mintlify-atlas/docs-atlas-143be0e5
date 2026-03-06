@@ -1,0 +1,333 @@
+---
+title: Custom Models
+description: Configure custom LLM models and providers
+---
+
+TIMEPOINT Flash supports multiple models and providers via `app/config.py:1`. You can override models per request or configure custom quality presets.
+
+## Verified Models
+
+Only use models from the verified list (see `app/config.py:82`):
+
+### Google Native API
+
+```python
+VerifiedModels.GOOGLE_TEXT = [
+    "gemini-2.5-flash",      # Fast, reliable, supports thinking
+    "gemini-2.0-flash",      # Older but stable
+]
+
+VerifiedModels.GOOGLE_IMAGE = [
+    "gemini-2.5-flash-image",        # Nano Banana - 1K images
+    "gemini-3-pro-image-preview",    # Nano Banana Pro - 2K/4K
+]
+```
+
+### OpenRouter API
+
+```python
+VerifiedModels.OPENROUTER_TEXT = [
+    "google/gemini-2.0-flash-001",      # Fast, good JSON
+    "google/gemini-2.0-flash-001:free", # Free tier
+    "google/gemini-3-flash-preview",    # Thinking model
+]
+```
+
+<Warning>
+Using unverified models will cause silent failures. Stick to the verified list above.
+</Warning>
+
+## Quality Presets
+
+TIMEPOINT Flash includes 4 quality presets (see `app/config.py:148`):
+
+### HD Quality
+
+Highest quality with Gemini 2.5 Flash and 2K images:
+
+```python
+QualityPreset.HD = {
+    "text_model": "gemini-2.5-flash",
+    "image_model": "gemini-3-pro-image-preview",  # 2K/4K support
+    "image_provider": ProviderType.GOOGLE,
+    "text_provider": ProviderType.GOOGLE,
+    "max_tokens": 8192,
+    "thinking_level": "high",
+    "image_size": "2K",
+}
+```
+
+### Hyper Speed
+
+Fastest generation via OpenRouter:
+
+```python
+QualityPreset.HYPER = {
+    "text_model": "google/gemini-2.0-flash-001",
+    "image_model": "gemini-2.5-flash-image",
+    "text_provider": ProviderType.OPENROUTER,
+    "max_tokens": 1024,
+    "thinking_level": None,
+}
+```
+
+### Balanced (Default)
+
+Balance of quality and speed:
+
+```python
+QualityPreset.BALANCED = {
+    "text_model": "gemini-2.5-flash",
+    "image_model": "gemini-2.5-flash-image",
+    "text_provider": ProviderType.GOOGLE,
+    "max_tokens": 2048,
+    "thinking_level": "medium",
+}
+```
+
+### Gemini 3 Flash
+
+Latest thinking model:
+
+```python
+QualityPreset.GEMINI3 = {
+    "text_model": "google/gemini-3-flash-preview",
+    "image_model": "gemini-2.5-flash-image",
+    "text_provider": ProviderType.OPENROUTER,
+    "max_tokens": 4096,
+    "thinking_level": "medium",
+}
+```
+
+## Environment Configuration
+
+<Steps>
+  <Step title="Set API keys">
+    Add to `.env`:
+
+    ```bash .env
+    # Google Native API
+    GOOGLE_API_KEY=your-google-api-key
+
+    # OpenRouter API
+    OPENROUTER_API_KEY=your-openrouter-api-key
+    ```
+  </Step>
+
+  <Step title="Configure providers">
+    ```bash .env
+    # Primary provider (google or openrouter)
+    PRIMARY_PROVIDER=google
+
+    # Fallback when primary fails
+    FALLBACK_PROVIDER=openrouter
+    ```
+  </Step>
+
+  <Step title="Set model overrides (optional)">
+    ```bash .env
+    # Override specific models
+    JUDGE_MODEL=gemini-2.5-flash
+    CREATIVE_MODEL=gemini-2.5-flash
+    IMAGE_MODEL=gemini-2.5-flash-image
+    ```
+  </Step>
+</Steps>
+
+## Per-Request Model Override
+
+Override models for individual requests:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "signing of the declaration",
+    "preset": "hd",
+    "model_overrides": {
+      "text_model": "gemini-2.5-flash",
+      "image_model": "gemini-3-pro-image-preview"
+    }
+  }'
+```
+
+<Note>
+Model overrides must use verified models from `VerifiedModels` class.
+</Note>
+
+## Creating Custom Presets
+
+Add a custom preset to `app/config.py`:
+
+<Steps>
+  <Step title="Define the preset">
+    ```python app/config.py
+    class QualityPreset(str, Enum):
+        HD = "hd"
+        HYPER = "hyper"
+        BALANCED = "balanced"
+        GEMINI3 = "gemini3"
+        CUSTOM = "custom"  # Add your preset
+    ```
+  </Step>
+
+  <Step title="Add configuration">
+    ```python app/config.py
+    PRESET_CONFIGS: dict[QualityPreset, dict[str, Any]] = {
+        # ... existing presets
+        QualityPreset.CUSTOM: {
+            "name": "Custom Preset",
+            "description": "Your custom configuration",
+            "text_model": "gemini-2.5-flash",  # Must be verified
+            "judge_model": "gemini-2.5-flash",
+            "image_model": "gemini-2.5-flash-image",
+            "image_provider": ProviderType.GOOGLE,
+            "text_provider": ProviderType.GOOGLE,
+            "max_tokens": 4096,
+            "thinking_level": "high",
+        },
+    }
+    ```
+  </Step>
+
+  <Step title="Set parallelism mode">
+    ```python app/config.py
+    PRESET_PARALLELISM: dict[QualityPreset, ParallelismMode] = {
+        # ... existing mappings
+        QualityPreset.CUSTOM: ParallelismMode.AGGRESSIVE,
+    }
+    ```
+  </Step>
+
+  <Step title="Use the preset">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/generate \
+      -H "Content-Type: application/json" \
+      -d '{"query": "signing of the declaration", "preset": "custom"}'
+    ```
+  </Step>
+</Steps>
+
+## Model Capabilities
+
+The LLM router automatically selects models based on capability:
+
+```python
+from app.core.providers import ModelCapability
+
+class ModelCapability(str, Enum):
+    TEXT = "text"              # Text generation
+    IMAGE = "image"            # Image generation
+    VISION = "vision"          # Image analysis
+    CODE = "code"              # Code generation
+    THINKING = "thinking"      # Extended reasoning
+```
+
+Agents specify their capability:
+
+```python
+class MyAgent(BaseAgent[InputT, OutputT]):
+    response_model = OutputSchema
+    capability = ModelCapability.TEXT  # Default
+```
+
+## Provider Setup
+
+### Google Native
+
+Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey):
+
+```bash .env
+GOOGLE_API_KEY=AIzaSy...
+```
+
+### OpenRouter
+
+Get an API key from [OpenRouter](https://openrouter.ai/keys):
+
+```bash .env
+OPENROUTER_API_KEY=sk-or-...
+```
+
+## Fallback Chain
+
+The router tries models in order (see `app/config.py:111`):
+
+```python
+VerifiedModels.TEXT_FALLBACK_CHAIN = [
+    "gemini-2.5-flash",              # Primary: Google native
+    "google/gemini-2.0-flash-001",   # Fallback: OpenRouter
+]
+
+VerifiedModels.IMAGE_FALLBACK_CHAIN = [
+    "gemini-2.5-flash-image",        # Primary: Nano Banana
+]
+```
+
+If a model fails, the next one is tried automatically.
+
+## Rate Limits and Parallelism
+
+Configure parallelism based on provider limits (see `app/config.py:213`):
+
+```python
+PROVIDER_RATE_LIMITS: dict[ProviderType, dict[str, int]] = {
+    ProviderType.GOOGLE: {
+        "rpm": 60,              # Requests per minute
+        "max_concurrent": 8,    # Safe concurrent calls
+    },
+    ProviderType.OPENROUTER: {
+        "rpm": 30,
+        "max_concurrent": 5,
+    },
+}
+```
+
+Parallelism modes:
+
+```python
+class ParallelismMode(str, Enum):
+    SEQUENTIAL = "sequential"   # 1 call at a time
+    NORMAL = "normal"           # 1-3 concurrent
+    AGGRESSIVE = "aggressive"   # 2-5 concurrent
+    MAX = "max"                 # Provider limit - 1
+```
+
+Set via environment:
+
+```bash .env
+PIPELINE_MAX_PARALLELISM=3  # Override default
+```
+
+## Validation
+
+The app validates presets on startup (see `app/config.py:578`):
+
+```python
+# Validates all presets use verified models
+errors = validate_presets()
+if errors:
+    raise ValueError(f"Configuration errors: {errors}")
+```
+
+This prevents using unverified models that would fail at runtime.
+
+## Model Override API
+
+Programmatically override models:
+
+```python
+from app.config import settings, VerifiedModels
+from app.core.llm_router import LLMRouter
+
+# Get router with custom model
+router = LLMRouter()
+response = await router.call(
+    prompt="Your prompt",
+    model_override="gemini-2.5-flash",  # Must be verified
+)
+```
+
+<Tip>
+Use HD preset for production quality, HYPER for fast prototyping, and BALANCED for development.
+</Tip>

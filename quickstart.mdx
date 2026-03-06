@@ -1,80 +1,594 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get from zero to your first generated scene in 5 minutes
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, make sure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Python 3.10+" icon="python">
+    Python 3.10, 3.11, or 3.12 installed on your system
+  </Card>
+  <Card title="Google API Key" icon="key">
+    Free API key from [Google AI Studio](https://aistudio.google.com)
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+The Google API key is free and provides generous quotas. OpenRouter is optional and only needed for the `hyper` and `gemini3` presets.
 </Note>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/timepoint-ai/timepoint-flash.git
+    cd timepoint-flash
+    ```
+  </Step>
+
+  <Step title="Run Setup Script">
+    The setup script checks prerequisites, installs dependencies, and creates your `.env` file:
+
+    ```bash
+    ./setup.sh
+    ```
+
+    **What it does:**
+    - Verifies Python 3.10+ is installed
+    - Checks for pip
+    - Installs all dependencies via `pip install -e .`
+    - Creates `.env` from `.env.example`
+    - Makes scripts executable
+
+    <Note>
+    If you prefer manual setup: `pip install -e .` then `cp .env.example .env`
+    </Note>
+  </Step>
+
+  <Step title="Add Your API Key">
+    Edit the `.env` file and add your Google API key:
+
+    ```bash .env
+    # === Required (at least one LLM provider) ===
+    GOOGLE_API_KEY=your-key-here
+    OPENROUTER_API_KEY=  # Optional
+
+    # === Database ===
+    DATABASE_URL=sqlite+aiosqlite:///./timepoint.db
+
+    # === Auth (optional - for iOS app mode) ===
+    AUTH_ENABLED=false
+    ```
+
+    <Warning>
+    Don't commit your API keys to version control. The `.env` file is already in `.gitignore`.
+    </Warning>
+  </Step>
+</Steps>
+
+## Quick Demo
+
+The fastest way to see Flash in action:
+
+```bash
+./quickstart.sh
+```
+
+**What it does:**
+1. Starts the FastAPI server (if not already running)
+2. Waits for server to be ready
+3. Generates a random historical scene from curated examples
+4. Shows real-time progress as each agent completes
+5. Displays the final scene with characters, dialog, and atmosphere
+
+**Sample output:**
+
+```bash
+  _____ ___ __  __ _____ ____   ___ ___ _   _ _____ 
+ |_   _|_ _|  \/  | ____|  _ \ / _ \_ _| \ | |_   _|
+   | |  | || |\/| |  _| | |_) | | | | ||  \| | | |  
+   | |  | || |  | | |___|  __/| |_| | || |\  | | |  
+   |_| |___|_|  |_|_____|_|    \___/___|_| \_| |_|  
+
+TIMEPOINT Flash v2.3.3 Quickstart
+
+Query: "Oppenheimer watches the Trinity test from the control bunker, 5:29 AM July 16 1945"
+
+[START] Initializing pipeline...
+  Validating historical query...
+[7%] Query validated
+  Extracting date and location...
+[14%] Timeline locked
+  Verifying facts via Google Search...
+[21%] Facts verified
+  Building scene environment...
+[28%] Scene set
+  Generating characters...
+[50%] Characters created
+[64%] Dialog written
+[100%] Generation complete!
+
+When: July 16, 1945 (pre-dawn)
+Where: Control bunker S-10000, Jornada del Muerto desert, New Mexico
+
+Characters:
+  - J. Robert Oppenheimer (director): Theoretical physicist, Manhattan Project director
+  - Leslie Groves (general): Military director, demanding pragmatist
+  - Kenneth Bainbridge (test director): Experimental physicist, responsible for technical execution
+  ...
+
+Dialog:
+  Bainbridge: "Minus ten seconds."
+  Fermi: "Should I drop the paper now?"
+  Oppenheimer: "..."
+```
+
+## Manual Server Start
+
+If you prefer to start the server manually:
+
+<CodeGroup>
+```bash Development (with auto-reload)
+./run.sh -r
+# Starts on http://localhost:8000
+```
+
+```bash Production
+./run.sh
+# Starts with 4 workers
+```
+
+```bash Custom Port
+uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+</CodeGroup>
+
+<Note>
+The server includes:
+- **Health endpoint**: `GET /health`
+- **Interactive docs**: `http://localhost:8000/docs`
+- **API v1**: `http://localhost:8000/api/v1/`
+</Note>
+
+## Your First API Call
+
+Once the server is running, generate your first scene:
+
+<CodeGroup>
+```bash cURL (Streaming)
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Alan Turing breaks Enigma at Bletchley Park Hut 8, winter 1941",
+    "preset": "balanced",
+    "generate_image": true
+  }'
+```
+
+```python Python
+import httpx
+
+response = httpx.post(
+    "http://localhost:8000/api/v1/timepoints/generate/sync",
+    json={
+        "query": "Alan Turing breaks Enigma at Bletchley Park Hut 8, winter 1941",
+        "preset": "balanced",
+        "generate_image": True
+    },
+    timeout=180.0
+)
+
+timepoint = response.json()
+print(f"Generated: {timepoint['location']}, {timepoint['year']}")
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:8000/api/v1/timepoints/generate/sync', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: 'Alan Turing breaks Enigma at Bletchley Park Hut 8, winter 1941',
+    preset: 'balanced',
+    generate_image: true
+  })
+});
+
+const timepoint = await response.json();
+console.log(`Generated: ${timepoint.location}, ${timepoint.year}`);
+```
+</CodeGroup>
+
+### Generation Endpoints
+
+Flash provides three generation modes:
+
+<CardGroup cols={3}>
+  <Card title="Streaming (SSE)" icon="tower-broadcast">
+    **Recommended** for real-time progress updates
+    
+    `POST /api/v1/timepoints/generate/stream`
+    
+    Returns Server-Sent Events as each agent completes
+  </Card>
+  
+  <Card title="Synchronous" icon="clock">
+    **Simple** blocking request
+    
+    `POST /api/v1/timepoints/generate/sync`
+    
+    Waits until complete, returns full result
+  </Card>
+  
+  <Card title="Background" icon="list-check">
+    **Async** for long-running tasks
+    
+    `POST /api/v1/timepoints/generate`
+    
+    Returns task ID, poll for result
+  </Card>
+</CardGroup>
+
+### Understanding the Response
+
+<Tabs>
+  <Tab title="Scene Metadata">
+    ```json
+    {
+      "timepoint_id": "550e8400-e29b-41d4-a716-446655440000",
+      "query": "Alan Turing breaks Enigma...",
+      "location": "Hut 8, Bletchley Park, Buckinghamshire, England",
+      "year": 1941,
+      "month": 12,
+      "day": null,
+      "time_of_day": "late night",
+      "season": "winter",
+      "tension_level": "high"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Characters">
+    ```json
+    {
+      "characters": [
+        {
+          "name": "Alan Turing",
+          "role": "primary",
+          "description": "Mathematician and cryptanalyst",
+          "voice": "Precise, measured, intellectual with occasional stammering",
+          "social_register": "educated",
+          "historical_context": "Leading the team breaking German naval Enigma"
+        }
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Dialog">
+    ```json
+    {
+      "dialog": [
+        {
+          "speaker": "Alan Turing",
+          "text": "I believe we've got it. The naval settings.",
+          "emotion": "restrained triumph",
+          "beat": "turn"
+        },
+        {
+          "speaker": "Hugh Alexander",
+          "text": "Are you certain? We've been close before.",
+          "emotion": "cautious hope",
+          "beat": "react"
+        }
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Image">
+    ```json
+    {
+      "image": {
+        "url": "https://...",
+        "provider": "google",
+        "model": "gemini-2.5-flash-image",
+        "prompt": "Interior of Hut 8 at Bletchley Park, winter 1941...",
+        "width": 1024,
+        "height": 1024
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Quality Presets
+
+Choose a preset based on your speed vs. quality needs:
+
+<CodeGroup>
+```bash Fast (hyper)
+# ~55 seconds, requires OPENROUTER_API_KEY
+curl -X POST localhost:8000/api/v1/timepoints/generate/sync \
+  -d '{"query": "...", "preset": "hyper"}'
+```
+
+```bash Balanced (default)
+# ~90-110 seconds, best for production
+curl -X POST localhost:8000/api/v1/timepoints/generate/sync \
+  -d '{"query": "...", "preset": "balanced"}'
+```
+
+```bash High Quality (hd)
+# ~2-2.5 minutes, extended thinking models
+curl -X POST localhost:8000/api/v1/timepoints/generate/sync \
+  -d '{"query": "...", "preset": "hd"}'
+```
+
+```bash Latest Model (gemini3)
+# ~60 seconds, requires OPENROUTER_API_KEY
+curl -X POST localhost:8000/api/v1/timepoints/generate/sync \
+  -d '{"query": "...", "preset": "gemini3"}'
+```
+</CodeGroup>
+
+## Interactive Demo
+
+For a full interactive experience with 10 curated templates:
+
+```bash
+./demo.sh
+```
+
+**Features:**
+- Choose from 10 historical moments
+- Real-time progress display
+- Chat with characters after generation
+- Time travel to moments before/after
+- Survey all characters with the same question
+
+## Exploring the API
+
+Flash includes interactive Swagger documentation:
+
+1. Start the server: `./run.sh -r`
+2. Open your browser: `http://localhost:8000/docs`
+3. Try endpoints directly from the browser interface
+
+<CardGroup cols={2}>
+  <Card title="Try Endpoints" icon="play">
+    Execute API calls with the "Try it out" button on each endpoint
+  </Card>
+  <Card title="View Schemas" icon="table">
+    See complete request/response schemas with examples
+  </Card>
+  <Card title="Test Auth" icon="lock">
+    Test protected endpoints (when AUTH_ENABLED=true)
+  </Card>
+  <Card title="Download Spec" icon="download">
+    Export OpenAPI 3.0 spec for code generation
+  </Card>
+</CardGroup>
+
+## Example Queries
+
+Here are some queries that showcase Flash's capabilities:
+
+<Accordion title="Scientific Breakthroughs">
+```bash
+# Nuclear physics
+"Oppenheimer watches the Trinity test from control bunker S-10000, 5:29 AM July 16 1945"
+
+# Cryptography
+"Alan Turing breaks Enigma at Bletchley Park Hut 8, winter 1941"
+
+# Computing
+"Grace Hopper debugs the Mark II computer at Harvard, September 9 1947"
+```
+</Accordion>
+
+<Accordion title="AI Milestones">
+```bash
+# Chess
+"Kasparov slams the table after Deep Blue's move in Game 6, Equitable Center May 11 1997"
+
+# Go
+"AlphaGo plays Move 37 against Lee Sedol, Four Seasons Hotel Seoul March 10 2016"
+
+# Turing Test
+"Alan Turing proposes the imitation game, 1950"
+```
+</Accordion>
+
+<Accordion title="Historical Turning Points">
+```bash
+# World War I
+"Gavrilo Princip at Moritz Schiller's Delicatessen, Latin Bridge, Sarajevo June 28 1914"
+
+# Ancient History
+"Julius Caesar crosses the Rubicon with the 13th Legion, January 10, 49 BC"
+
+# Space Race
+"Apollo 13 crew hears the oxygen tank explode, April 13 1970"
+```
+</Accordion>
+
+<Accordion title="Cultural Moments">
+```bash
+# Mathematics
+"Ramanujan arrives at Trinity College, Great Gate, Cambridge, March 1914"
+
+# Philosophy
+"Hypatia teaching astronomy in the Library of Alexandria, 415 AD"
+
+# Innovation
+"Tesla sits alone in room 3327 of the New Yorker Hotel, January 1943"
+```
+</Accordion>
+
+## Interactive Features
+
+Once you've generated a scene, you can interact with it:
+
+<Steps>
+  <Step title="Chat with Characters">
+    ```bash
+    curl -X POST localhost:8000/api/v1/interactions/{timepoint_id}/chat \
+      -d '{
+        "character_name": "Alan Turing",
+        "message": "How did you figure out the Enigma settings?"
+      }'
+    ```
+    
+    Characters respond in-character with period-appropriate knowledge.
+  </Step>
+  
+  <Step title="Time Travel">
+    ```bash
+    # Jump forward 1 hour
+    curl -X POST localhost:8000/api/v1/temporal/{timepoint_id}/next \
+      -d '{"units": 1, "unit": "hour"}'
+    
+    # Jump back 1 day
+    curl -X POST localhost:8000/api/v1/temporal/{timepoint_id}/prior \
+      -d '{"units": 1, "unit": "day"}'
+    ```
+  </Step>
+  
+  <Step title="Survey Characters">
+    ```bash
+    curl -X POST localhost:8000/api/v1/interactions/{timepoint_id}/survey \
+      -d '{"question": "What do you think will happen next?"}'
+    ```
+    
+    Get responses from all characters at once.
+  </Step>
+</Steps>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Server won't start">
+    **Check your .env file:**
+    ```bash
+    # Make sure GOOGLE_API_KEY is set (not placeholder)
+    cat .env | grep GOOGLE_API_KEY
+    ```
+    
+    **Check database:**
+    ```bash
+    # Run migrations
+    alembic upgrade head
+    ```
+    
+    **Check port availability:**
+    ```bash
+    # Port 8000 might be in use
+    lsof -i :8000
+    # Use a different port
+    uvicorn app.main:app --port 8080
+    ```
+  </Accordion>
+  
+  <Accordion title="Generation fails with API error">
+    **Verify API key works:**
+    ```bash
+    curl -H "Authorization: Bearer $GOOGLE_API_KEY" \
+      https://generativelanguage.googleapis.com/v1/models
+    ```
+    
+    **Check quotas:**
+    Visit [Google AI Studio](https://aistudio.google.com) and check your quota limits.
+    
+    **Try a different preset:**
+    ```bash
+    # If 'balanced' fails, try 'hyper' (requires OpenRouter)
+    curl -X POST localhost:8000/api/v1/timepoints/generate/sync \
+      -d '{"query": "...", "preset": "hyper"}'
+    ```
+  </Accordion>
+  
+  <Accordion title="Images not generating">
+    **Check image providers:**
+    ```bash
+    curl localhost:8000/api/v1/models/providers
+    ```
+    
+    Flash uses 3-tier fallback, so images should always work. If all providers fail:
+    - Google API key might not have Imagen access
+    - Network connectivity issues
+    - Set `generate_image: false` to skip images
+  </Accordion>
+  
+  <Accordion title="Slow generation">
+    **Try a faster preset:**
+    ```bash
+    # hyper is ~55 seconds vs balanced ~110 seconds
+    {"preset": "hyper"}
+    ```
+    
+    **Disable image generation:**
+    ```bash
+    {"generate_image": false}  # Saves 10-20 seconds
+    ```
+    
+    **Check rate limits:**
+    If you're hitting rate limits, generation will slow down with retries.
+  </Accordion>
+</AccordionGroup>
+
+## Testing Your Setup
+
+Run the test suite to verify everything works:
+
+```bash
+# Fast unit tests (no API calls)
+python3.10 -m pytest tests/ -m fast -v
+
+# Integration tests (with mocked APIs)
+python3.10 -m pytest tests/ -m integration -v
+
+# All tests (522 fast + integration, 11 skipped e2e)
+python3.10 -m pytest tests/ -v
+```
+
+<Note>
+End-to-end tests are skipped by default because they require real API keys and make actual API calls. To run them: `pytest tests/ -m e2e -v`
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Complete endpoint documentation with all parameters and response schemas
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment">
+    Deploy to production with Railway, Docker, or Replit
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Deep dive into the 14-agent pipeline and how grounding works
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Advanced configuration: auth, billing, blob storage, CORS
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/timepoint-ai/timepoint-flash/issues">
+    Report bugs or request features
+  </Card>
+  <Card title="Documentation" icon="book" href="https://github.com/timepoint-ai/timepoint-flash#readme">
+    Full README with examples
+  </Card>
+  <Card title="API Docs" icon="code" href="http://localhost:8000/docs">
+    Interactive Swagger documentation (when server is running)
+  </Card>
+  <Card title="Twitter/X" icon="x-twitter" href="https://x.com/seanmcdonaldxyz">
+    Follow for updates and announcements
+  </Card>
+</CardGroup>

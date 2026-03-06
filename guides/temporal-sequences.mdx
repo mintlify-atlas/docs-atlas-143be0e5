@@ -1,0 +1,376 @@
+---
+title: Temporal Sequences
+description: Build timeline sequences with linked scenes
+---
+
+Temporal sequences let you jump forward or backward from any scene to explore connected moments (see `docs/TEMPORAL.md:1`).
+
+## Core Concepts
+
+Every timepoint can link to:
+
+- **Prior timepoint** - What happened before
+- **Next timepoint** - What happened after
+
+Chains form temporal sequences:
+
+```
+1945-07-16 Trinity test
+    ↓ next (+1 day)
+1945-07-17 Aftermath at S-10000
+    ↓ next (+3 weeks)
+1945-08-06 Hiroshima
+```
+
+## Creating Sequences
+
+<Steps>
+  <Step title="Generate the initial scene">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/generate \
+      -H "Content-Type: application/json" \
+      -d '{"query": "Trinity test, July 16 1945 5:29 AM"}'
+    ```
+
+    Response:
+    ```json
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "pending",
+      "query": "Trinity test, July 16 1945 5:29 AM"
+    }
+    ```
+  </Step>
+
+  <Step title="Wait for completion">
+    ```bash
+    curl http://localhost:8000/api/v1/timepoints/550e8400-e29b-41d4-a716-446655440000
+    ```
+
+    Wait until `status: "completed"`.
+  </Step>
+
+  <Step title="Jump forward in time">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/temporal/550e8400-e29b-41d4-a716-446655440000/next \
+      -H "Content-Type: application/json" \
+      -d '{"units": 1, "unit": "day"}'
+    ```
+
+    Response:
+    ```json
+    {
+      "source_id": "550e8400-e29b-41d4-a716-446655440000",
+      "target_id": "661f9511-f39c-42e5-b827-557766550001",
+      "source_year": 1945,
+      "target_year": 1945,
+      "direction": "next",
+      "units": 1,
+      "unit": "day",
+      "message": "Generated moment 1 day(s) forward"
+    }
+    ```
+  </Step>
+
+  <Step title="Fetch the new scene">
+    ```bash
+    curl http://localhost:8000/api/v1/timepoints/661f9511-f39c-42e5-b827-557766550001?full=true
+    ```
+
+    The new scene continues from the original:
+    - Same location (or nearby)
+    - Same characters (aged appropriately)
+    - Story reflects what happened between
+  </Step>
+</Steps>
+
+## Time Units
+
+Supported units:
+
+| Unit | Range | Use Case |
+|------|-------|----------|
+| `second` | 1-3600 | Same event, different angle |
+| `minute` | 1-1440 | Same day, different moments |
+| `hour` | 1-720 | Same day or next day |
+| `day` | 1-365 | Same week/month/year |
+| `week` | 1-52 | Months apart |
+| `month` | 1-120 | Years apart |
+| `year` | 1-100 | Decades/centuries apart |
+
+<Note>
+Maximum jump: 365 units per request. For larger jumps, chain multiple requests.
+</Note>
+
+## Jumping Backward
+
+Explore what led up to a moment:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/{id}/prior \
+  -H "Content-Type: application/json" \
+  -d '{"units": 1, "unit": "hour"}'
+```
+
+Example sequence:
+
+```
+← 1 hour: Turing answers the door
+← 30 minutes: Police arrive at Turing's home
+Current: Police interrogation begins
+```
+
+## Retrieving Sequences
+
+Get the full temporal chain:
+
+```bash
+curl "http://localhost:8000/api/v1/temporal/{id}/sequence?direction=both"
+```
+
+Response:
+
+```json
+{
+  "center": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "year": 1945,
+    "slug": "trinity-test-abc123"
+  },
+  "prior": [
+    {
+      "id": "440d8300-d18a-30c3-a605-335544330000",
+      "year": 1945,
+      "slug": "trinity-preparation-xyz789"
+    }
+  ],
+  "next": [
+    {
+      "id": "661f9511-f39c-42e5-b827-557766550001",
+      "year": 1945,
+      "slug": "trinity-aftermath-def456"
+    },
+    {
+      "id": "772fa622-g40d-53f6-c938-668877660002",
+      "year": 1945,
+      "slug": "hiroshima-bombing-ghi789"
+    }
+  ]
+}
+```
+
+Query parameters:
+
+- `direction=both` - Prior + next (default)
+- `direction=prior` - Only prior timepoints
+- `direction=next` - Only next timepoints
+
+## What Gets Preserved
+
+When jumping in time, the system maintains:
+
+### Location Continuity
+
+- Same place (or logical progression)
+- Example: Trinity test site → S-10000 bunker → Los Alamos
+
+### Character Continuity
+
+- Same people appear (where historically accurate)
+- Ages adjust for large jumps
+- Characters may enter/exit based on historical records
+
+### Narrative Continuity
+
+- Dialog references prior events
+- Emotional states evolve
+- Relationships reflect what happened between scenes
+
+### Historical Accuracy
+
+- Grounding agent verifies facts for each jump
+- Location changes follow historical records
+- Character presence verified via search
+
+## Use Cases
+
+### 1. Track a Single Day
+
+Follow a historical figure through their day:
+
+```bash
+# Morning
+query: "Leonardo da Vinci in his workshop, morning, April 15 1503"
+
+# +4 hours: Midday
+POST /temporal/{id}/next {"units": 4, "unit": "hour"}
+
+# +4 hours: Afternoon
+POST /temporal/{new_id}/next {"units": 4, "unit": "hour"}
+
+# +4 hours: Evening
+POST /temporal/{new_id}/next {"units": 4, "unit": "hour"}
+```
+
+### 2. Before and After
+
+Capture the moment and its context:
+
+```bash
+# The moment
+query: "Turing being interrogated by police, 1952"
+
+# What led to it (1 hour before)
+POST /temporal/{id}/prior {"units": 1, "unit": "hour"}
+
+# What happened after (1 hour later)
+POST /temporal/{id}/next {"units": 1, "unit": "hour"}
+```
+
+### 3. Historical Arc
+
+Follow an event over time:
+
+```bash
+# Start
+query: "Declaration of Independence signing, July 4 1776"
+
+# +1 week: Initial reactions
+POST /temporal/{id}/next {"units": 1, "unit": "week"}
+
+# +6 months: Winter at Valley Forge
+POST /temporal/{new_id}/next {"units": 6, "unit": "month"}
+
+# +1 year: Battle of Saratoga
+POST /temporal/{new_id}/next {"units": 1, "unit": "year"}
+```
+
+### 4. Hourly Progression
+
+Dense timeline of a critical event:
+
+```bash
+# Apollo 11: T-1 hour
+query: "Apollo 11 launch preparations, July 16 1969 8:32 AM"
+
+# Every hour leading to launch at 9:32 AM
+for hour in range(1, 2):
+    POST /temporal/{id}/next {"units": 1, "unit": "hour"}
+```
+
+## BCE Dates
+
+Dates before year 1 use negative numbers:
+
+```bash
+# Rome, 50 BCE
+query: "Julius Caesar in Rome, 50 BCE"
+# Database stores: year = -50
+
+# Jump 100 years forward to 50 CE
+POST /temporal/{id}/next {"units": 100, "unit": "year"}
+# New scene: year = 50
+```
+
+| Date | API Value |
+|------|----------|
+| 50 BCE | -50 |
+| 44 BCE (Caesar's death) | -44 |
+| 1 CE | 1 |
+
+## Visibility and Permissions
+
+Temporal sequences respect privacy (when `AUTH_ENABLED=true`):
+
+### Public Source
+
+Anyone can jump forward/backward:
+
+```bash
+# Public timepoint
+POST /temporal/{public_id}/next
+# ✓ Allowed without auth
+```
+
+### Private Source (Owner)
+
+Owner can create sequences:
+
+```bash
+# Owner's private timepoint
+curl -X POST http://localhost:8000/api/v1/temporal/{private_id}/next \
+  -H "Authorization: Bearer {owner_token}" \
+  -d '{"units": 1, "unit": "day"}'
+# ✓ Allowed
+# New timepoint inherits privacy (is_public=false)
+```
+
+### Private Source (Non-Owner)
+
+Non-owners are blocked:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/temporal/{private_id}/next \
+  -H "Authorization: Bearer {other_user_token}" \
+  -d '{"units": 1, "unit": "day"}'
+# ✗ 403 Forbidden
+```
+
+## Multiple Branches
+
+A timepoint can have multiple children:
+
+```
+Trinity test (1945-07-16)
+    ├─→ +1 day: Aftermath
+    ├─→ +3 weeks: Hiroshima
+    └─→ +1 year: Bikini Atoll test
+```
+
+The sequence endpoint follows the most recently created child:
+
+```bash
+GET /temporal/{trinity_id}/sequence?direction=next
+# Returns: [Bikini Atoll test]  (most recent)
+```
+
+## Error Handling
+
+### Source Not Completed
+
+```json
+{
+  "error": "Source timepoint not completed",
+  "detail": "Wait for status=completed before creating temporal links"
+}
+```
+
+### Invalid Time Unit
+
+```json
+{
+  "error": "Invalid time unit",
+  "detail": "Must be one of: second, minute, hour, day, week, month, year"
+}
+```
+
+### Units Out of Range
+
+```json
+{
+  "error": "Units out of range",
+  "detail": "Maximum 365 units per request"
+}
+```
+
+## Best Practices
+
+1. **Start with a precise scene** - Sharp initial context yields better jumps
+2. **Match units to your story** - Hours for drama, years for arcs
+3. **Keep chains manageable** - 5-10 linked scenes work best
+4. **Verify completion** - Check `status=completed` before jumping
+5. **Use grounding** - Historical queries benefit from fact verification
+
+<Tip>
+Use smaller time jumps (hours/days) for dense narrative continuity. Use larger jumps (months/years) for sweeping historical arcs.
+</Tip>

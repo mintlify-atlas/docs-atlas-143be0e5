@@ -1,0 +1,221 @@
+---
+title: 'Users'
+description: 'User-scoped timepoints, data export, and user provisioning'
+---
+
+User endpoints provide access to user-specific timepoints, full data export for GDPR compliance, and service-to-service user provisioning.
+
+## POST /api/v1/users/resolve
+
+**Service-key protected.** Find or create user by external identity (Auth0 sub or other provider ID).
+
+### Authentication
+
+Requires `X-Service-Key` header matching `FLASH_SERVICE_KEY` env var.
+
+### Request Body
+
+<ParamField body="external_id" type="string" required>
+  Auth0 sub or other external provider ID
+</ParamField>
+
+<ParamField body="email" type="string">
+  User email (set on create only)
+</ParamField>
+
+<ParamField body="display_name" type="string">
+  Display name (set on create only)
+</ParamField>
+
+### Response
+
+<ResponseField name="user_id" type="string">
+  Flash user UUID
+</ResponseField>
+
+<ResponseField name="created" type="boolean">
+  `true` if a new user was provisioned
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/users/resolve \
+  -H "Content-Type: application/json" \
+  -H "X-Service-Key: your-flash-service-key" \
+  -d '{
+    "external_id": "auth0|abc123",
+    "email": "user@example.com",
+    "display_name": "Jane Doe"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "created": true
+}
+```
+
+### Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 200 | User found or created |
+| 403 | Invalid service key |
+| 503 | `FLASH_SERVICE_KEY` not configured |
+
+<Note>
+**Use case:** Called by timepoint-billing after Auth0 login to ensure the user exists in Flash before relaying generation requests.
+</Note>
+
+---
+
+## GET /api/v1/users/me/timepoints
+
+Paginated list of the authenticated user's timepoints.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Query Parameters
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed)
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="20">
+  Items per page (max 100)
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by status: `completed`, `failed`, `processing`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of timepoint summaries
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total matching timepoints
+</ResponseField>
+
+<ResponseField name="page" type="integer">
+  Current page number
+</ResponseField>
+
+<ResponseField name="page_size" type="integer">
+  Items per page
+</ResponseField>
+
+### Example
+
+```bash
+curl "http://localhost:8000/api/v1/users/me/timepoints?page=1&page_size=20" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "query": "Oppenheimer Trinity test 1945",
+      "slug": "oppenheimer-trinity-test-a1b2c3",
+      "status": "completed",
+      "year": 1945,
+      "location": "Jornada del Muerto, New Mexico",
+      "has_image": true,
+      "created_at": "2026-02-09T12:00:00Z"
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+---
+
+## GET /api/v1/users/me/export
+
+**GDPR Subject Access Request.** Full JSON export of user data.
+
+Returns profile, complete credit history, and full scene JSON for every user timepoint.
+
+### Authentication
+
+Requires Bearer JWT.
+
+### Response
+
+<ResponseField name="user" type="object">
+  User profile with `id`, `email`, `display_name`, `created_at`, `last_login_at`, `is_active`
+</ResponseField>
+
+<ResponseField name="credit_history" type="array">
+  Complete transaction ledger
+</ResponseField>
+
+<ResponseField name="timepoints" type="array">
+  Full scene data for all user timepoints
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/users/me/export \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "display_name": null,
+    "created_at": "2026-02-09T12:00:00Z",
+    "last_login_at": "2026-02-09T12:00:00Z",
+    "is_active": true
+  },
+  "credit_history": [
+    {
+      "amount": -5,
+      "balance_after": 45,
+      "type": "generation",
+      "description": "Scene generation (balanced)",
+      "created_at": "2026-02-09T12:00:00Z"
+    }
+  ],
+  "timepoints": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "query": "Oppenheimer Trinity test 1945",
+      "characters": {...},
+      "dialog": [...],
+      "scene": {...}
+    }
+  ]
+}
+```
+
+<Note>
+**App Store compliance:** This endpoint satisfies the GDPR Subject Access Request requirement.
+</Note>
+
+---
+
+## Related Endpoints
+
+- **User profile:** `GET /api/v1/auth/me` — Current user info without timepoints
+- **Account deletion:** `DELETE /api/v1/auth/account` — Soft-delete user account
+- **Credit balance:** `GET /api/v1/credits/balance` — Current credit balance

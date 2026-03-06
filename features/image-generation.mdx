@@ -1,0 +1,480 @@
+---
+title: 'Image Generation'
+description: 'Photorealistic historical scenes with 3-tier fallback and emotion physicalization'
+---
+
+TIMEPOINT Flash generates photorealistic images of historical scenes using a 3-tier fallback system, prompt optimization, and emotion-to-physicality translation.
+
+---
+
+## How It Works
+
+Image generation follows a multi-step process:
+
+<Steps>
+  <Step title="Prompt Assembly">
+    The **ImagePrompt Agent** combines:
+    - Scene setting and atmosphere
+    - Character descriptions (appearance, clothing, emotional state)
+    - Camera composition (angle, lighting, focal point)
+    - Grounded facts (verified location details, period-accurate technology)
+    - Tension and dramatic context
+    
+    Result: ~5,000-11,000 character detailed prompt
+  </Step>
+  
+  <Step title="Prompt Optimization">
+    The **ImagePromptOptimizer Agent**:
+    - Compresses prompt to ~77 words (~100 tokens)
+    - **Translates emotion into physical cues:**
+      - "Terror" → "wide eyes, open mouth, body recoiling, dropped objects"
+      - "Climactic tension" → "frozen mid-action, white knuckles, sweat on brow"
+      - "Grief" → "collapsed posture, hands covering face, slack jaw"
+    - Removes narrative backstory ("this moment matters because...")
+    - Detects anachronisms (modern elements in historical scenes)
+    - Front-loads composition and era cues
+    
+    Result: ~77-word optimized prompt ready for image model
+  </Step>
+  
+  <Step title="Image Generation (3-Tier Fallback)">
+    Attempts generation in order:
+    1. **Google Imagen 3** (native, fast, high quality)
+    2. **OpenRouter Flux 1.1 Pro** (fallback for Imagen failures)
+    3. **Pollinations.ai** (free fallback, always succeeds)
+    
+    Image generation **never fails** — you always get an image.
+  </Step>
+</Steps>
+
+---
+
+## 3-Tier Fallback System
+
+From `app/agents/image_gen.py` and `app/core/llm_router.py`:
+
+### Tier 1: Google Imagen 3 (Default)
+
+**Model:** `gemini-2.5-flash-image` (Google Native API)
+
+**Advantages:**
+- Fast (~3-5 seconds)
+- High quality photorealism
+- Good with historical scenes
+- Integrated with Gemini ecosystem
+
+**Limitations:**
+- Requires Google API key
+- Subject to usage limits
+- May reject some prompts (safety filters)
+
+### Tier 2: OpenRouter Flux 1.1 Pro
+
+**Model:** `black-forest-labs/flux-1.1-pro` (via OpenRouter)
+
+**Advantages:**
+- High-quality alternative
+- Fewer safety restrictions
+- Good prompt adherence
+
+**Limitations:**
+- Requires OpenRouter API key
+- Slower than Imagen (~10-15 seconds)
+- Costs per generation
+
+**Triggered when:** Imagen API call fails (key missing, rate limit, rejection)
+
+### Tier 3: Pollinations.ai (Free Fallback)
+
+**Model:** Pollinations public API (free)
+
+**Advantages:**
+- Always available
+- No API key required
+- Free to use
+- Never fails
+
+**Limitations:**
+- Lower quality
+- Less prompt adherence
+- Slower (~15-30 seconds)
+
+**Triggered when:** Both Imagen and Flux fail
+
+<Note>
+**Graceful degradation:** If all image generation fails, the timepoint is still created with all text data intact. Users get the scene, characters, and dialog — just no image.
+</Note>
+
+---
+
+## Emotion Physicalization
+
+The optimizer translates abstract emotion into visible body language.
+
+### How It Works
+
+From `app/agents/image_prompt_optimizer.py:118-149`:
+
+```python
+# Key principle from system prompt:
+"TRANSLATE emotion into physicality: Do NOT remove emotional content — 
+convert it into visible body language, facial expressions, and environmental cues.
+
+'Terror' → 'wide eyes, open mouth, body recoiling, dropped objects'
+'Climactic tension' → 'frozen mid-action, white knuckles, sweat on brow'
+'Grief' → 'collapsed posture, hands covering face, slack jaw'"
+```
+
+### Example: AlphaGo Move 37
+
+**Full Prompt (verbose):**
+```
+A photorealistic scene capturing the moment of Lee Sedol's realization 
+that AlphaGo has made an unprecedented move. High dramatic tension. 
+Intense concentration mixed with disbelief. The room is hushed. 
+Lee Sedol sits at a Go board opposite a monitor displaying AlphaGo's 
+moves. His expression shows stunned surprise. Journalists and researchers 
+watch from behind a barrier. Modern conference room lighting. Cables 
+connecting equipment. The atmosphere is charged with the sense that 
+history is being made. This is the moment that changed humanity's 
+understanding of artificial intelligence...
+```
+
+**Optimized Prompt (77 words):**
+```
+Photorealistic, 8k. Modern conference room, bright overhead lighting, 
+Go tournament setup. Lee Sedol (mid-30s, focused expression, slight 
+frown, hand frozen over board) sits at polished wooden table with Go 
+board. Monitor displaying moves opposite him. Body language: tense 
+posture, furrowed brow, lips slightly parted in surprise. Background: 
+rows of journalists and researchers behind barrier, cables across floor. 
+Sharp focus on Lee Sedol's face and hand. Caught moment, not posed.
+```
+
+**Emotion Translation:**
+- "High dramatic tension" → "hand frozen over board, tense posture, furrowed brow"
+- "Stunned surprise" → "lips slightly parted, slight frown"
+- "Intense concentration" → "focused expression, sharp focus on face"
+- "History being made" → "caught moment, not posed"
+
+---
+
+## Prompt Optimization Details
+
+### Compression Strategy
+
+From ~300-400 words to ~77 words:
+
+<Accordion title="What Gets Removed">
+- Abstract narrative ("this moment changed history because...")
+- Multiple competing focal points (pick ONE)
+- Redundant descriptions
+- Background character details beyond "crowd" or "observers"
+- Relationship descriptions (not visible in images)
+- Internal thoughts/motivations
+</Accordion>
+
+<Accordion title="What Gets Translated">
+- **Tension arc** → physical body language and environmental urgency
+- **Emotional beats** → facial expressions, posture, gesture, object handling
+- **Stakes** → environmental danger cues (smoke, fire, visible threats)
+- **Mood** → lighting and color palette
+</Accordion>
+
+<Accordion title="What Gets Preserved">
+- Setting and specific location
+- Time period visual cues (architecture, clothing, technology)
+- Lighting and atmosphere
+- 1-2 primary character descriptions with physicalized emotion
+- Camera angle/composition
+- Color palette
+- Style directives ("photorealistic", "8k", etc.)
+</Accordion>
+
+### Front-Loading Principle
+
+The optimizer puts the most important elements **first**:
+
+**Structure:**
+```
+[First 40 words]: Composition + Lighting + Era + Setting
+[Next 37 words]: Character details + Physicalized emotion + Style directives
+```
+
+**Example:**
+```
+Photorealistic, 8k. Control bunker interior, dim red emergency lighting, 
+1940s military equipment. July 16, 1945, pre-dawn. Wide-angle shot of 
+scientists gathered around instruments. 
+
+J. Robert Oppenheimer (40s, gaunt face, intense eyes, gripping railing, 
+white knuckles) center frame. Others in shadow. Tension visible in rigid 
+postures, clenched hands. Period-accurate dials, switches. Caught moment.
+```
+
+Image models prioritize early tokens, so composition and era come first.
+
+---
+
+## Anachronism Detection
+
+The optimizer flags period-inappropriate elements:
+
+### Examples of Caught Anachronisms
+
+<CodeGroup>
+
+```text 1945 Scene
+Prompt: "Scientists wearing modern safety glasses"
+Issue: Safety glasses not common until 1960s
+Fix: "Scientists squinting at bright flash"
+```
+
+```text 1776 Scene
+Prompt: "Room lit by electric lights"
+Issue: Electric lighting not invented until 1879
+Fix: "Room lit by oil lamps and candles"
+```
+
+```text 1914 Scene
+Prompt: "Archduke in a modern sedan"
+Issue: Wrong vehicle type for era
+Fix: "Archduke in Graf & Stift open-top touring car"
+```
+
+</CodeGroup>
+
+From the optimizer output:
+
+```json
+{
+  "issues_found": [
+    {
+      "issue_type": "anachronism",
+      "description": "Electric lighting mentioned in 1776 scene",
+      "severity": "critical",
+      "fix_applied": "Replaced with 'candlelight and oil lamps'"
+    }
+  ]
+}
+```
+
+---
+
+## Non-Human Entity Representation
+
+From the grounding agent and image prompt agent:
+
+**Problem:** Abstract entities (computers, AI, organizations) can't appear in images.
+
+**Solution:** The grounding agent discovers WHO physically represented them.
+
+### Examples
+
+| Entity | Physical Representation | Prompt |
+|--------|------------------------|--------|
+| Deep Blue | IBM operator | "Kasparov at chess board opposite IBM operator in white shirt, relaying Deep Blue's moves" |
+| AlphaGo | Monitor display | "Lee Sedol at Go board opposite monitor showing AlphaGo moves, cables visible" |
+| HAL 9000 | Red camera lens | "Spacecraft interior, red camera lens on wall, astronaut visible in reflection" |
+| "The Government" | Official signing document | "Suited official at desk signing document, seal visible" |
+
+This ensures images show **people** where people were present, not empty chairs.
+
+See [Grounding](/concepts/grounding) for details.
+
+---
+
+## Quality Control
+
+The optimizer provides quality metrics:
+
+```json
+{
+  "optimized_prompt": "...",
+  "word_count": 77,
+  "focal_elements": [
+    "Lee Sedol's frozen hand",
+    "Go board",
+    "Monitor display"
+  ],
+  "removed_elements": [
+    "Historical significance explanation",
+    "Background researcher individual descriptions",
+    "AI philosophy discussion"
+  ],
+  "issues_found": [],
+  "quality_score": 9,
+  "optimization_notes": "Compressed 387 words to 77. Emotion translated to body language. Single focal point (Lee Sedol). Era cues front-loaded."
+}
+```
+
+**Quality Score (1-10):**
+- 1-3: Poor (many issues, unclear focal point)
+- 4-6: Acceptable (some issues, reasonable clarity)
+- 7-8: Good (minor issues, clear focus)
+- 9-10: Excellent (no issues, optimal composition)
+
+---
+
+## API Usage
+
+### Generate with Image (Streaming)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Trinity test 5:29 AM July 16 1945",
+    "generate_image": true,
+    "preset": "balanced"
+  }'
+```
+
+**Progress Events:**
+
+```
+data: {"event": "step", "step": "image_prompt", "status": "success"}
+data: {"event": "step", "step": "image_prompt_optimize", "status": "success", "data": {"word_count": 77}}
+data: {"event": "step", "step": "image_generation", "status": "success", "data": {"model": "gemini-2.5-flash-image"}}
+data: {"event": "complete", "timepoint_id": "abc123"}
+```
+
+### Disable Optimization
+
+Use the full verbose prompt without compression:
+
+```bash
+curl -X POST .../generate \
+  -d '{
+    "query": "Rome 50 BCE",
+    "generate_image": true,
+    "optimize_prompt": false
+  }'
+```
+
+<Warning>
+Disabling optimization may result in:
+- Lower image quality (models struggle with verbose prompts)
+- More anachronisms (no automatic detection)
+- Less emotional physicality (abstract descriptions not translated)
+</Warning>
+
+### Retrieve Image
+
+Images are base64-encoded in the timepoint response:
+
+```bash
+curl http://localhost:8000/api/v1/timepoints/abc123?full=true
+```
+
+**Response:**
+
+```json
+{
+  "id": "abc123",
+  "query": "Trinity test 5:29 AM July 16 1945",
+  "year": 1945,
+  "image_base64": "iVBORw0KGgoAAAANSUhEUgAA...",
+  "image_format": "jpeg",
+  "image_prompt": "Photorealistic, 8k. Control bunker interior...",
+  "image_model": "gemini-2.5-flash-image"
+}
+```
+
+Decode and display:
+
+```python
+import base64
+from PIL import Image
+import io
+
+# Decode base64
+image_data = base64.b64decode(timepoint["image_base64"])
+image = Image.open(io.BytesIO(image_data))
+image.show()
+```
+
+---
+
+## Configuration
+
+### Image Model Override
+
+Specify a custom image model:
+
+```bash
+curl -X POST .../generate \
+  -d '{
+    "query": "Rome 50 BCE",
+    "generate_image": true,
+    "image_model": "black-forest-labs/flux-1.1-pro"
+  }'
+```
+
+### Aspect Ratios
+
+Control image dimensions:
+
+```bash
+curl -X POST .../generate \
+  -d '{
+    "query": "Signing of the Declaration",
+    "generate_image": true,
+    "aspect_ratio": "16:9"
+  }'
+```
+
+Supported ratios:
+- `1:1` (default, 1024×1024)
+- `16:9` (widescreen)
+- `9:16` (portrait)
+- `4:3` (classic)
+
+### Disable Image Generation
+
+Get text-only scene (faster, no image credits):
+
+```bash
+curl -X POST .../generate \
+  -d '{
+    "query": "Rome 50 BCE",
+    "generate_image": false
+  }'
+```
+
+---
+
+## Performance
+
+| Tier | Model | Typical Latency | Quality |
+|------|-------|----------------|----------|
+| 1 | Google Imagen 3 | 3-5s | Excellent |
+| 2 | OpenRouter Flux 1.1 Pro | 10-15s | Excellent |
+| 3 | Pollinations.ai | 15-30s | Good |
+
+**Total generation time** (with image):
+- **hyper preset:** ~55s (text) + ~5s (image) = **60s**
+- **balanced preset:** ~100s (text) + ~5s (image) = **105s**
+- **hd preset:** ~150s (text) + ~5s (image) = **155s**
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scene Generation" icon="wand-magic-sparkles" href="/features/scene-generation">
+    Generate complete historical scenes
+  </Card>
+  
+  <Card title="Grounding" icon="magnifying-glass" href="/concepts/grounding">
+    How facts are verified via Google Search
+  </Card>
+  
+  <Card title="Pipeline Details" icon="diagram-project" href="/concepts/pipeline">
+    Full 14-agent architecture
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/generation">
+    Complete generation endpoint docs
+  </Card>
+</CardGroup>

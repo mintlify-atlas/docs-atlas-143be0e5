@@ -1,0 +1,375 @@
+---
+title: Rate Limits
+description: Rate limiting implementation and best practices for TIMEPOINT Flash
+---
+
+## Overview
+
+TIMEPOINT Flash uses **proactive rate limiting** to prevent 429 errors before they happen. The system employs a token bucket algorithm that allows controlled bursting while maintaining sustainable average rates.
+
+## Rate Limiting Strategy
+
+### Token Bucket Algorithm
+
+The rate limiter uses a token bucket for each model tier:
+
+- **Tokens**: Represent available request capacity
+- **Capacity**: Maximum burst size (e.g., 5 requests)
+- **Refill Rate**: Tokens added per second (e.g., 0.75/sec = 45 requests/min)
+
+When you make a request:
+1. Rate limiter checks if a token is available
+2. If yes, consumes token and proceeds
+3. If no, waits until next token refills
+4. Tokens refill continuously at configured rate
+
+### Tier-Based Limits
+
+Rate limits vary by model tier:
+
+| Tier | RPM | Burst | Refill Rate | Models |
+|------|-----|-------|-------------|--------|
+| **Free** | 8 | 2 | 0.13/sec | OpenRouter `:free` models |
+| **Paid** | 45 | 5 | 0.75/sec | OpenRouter paid models |
+| **Native** | 58 | 8 | 0.97/sec | Google Native API models |
+
+<Info>
+RPM = Requests Per Minute. Burst = Maximum concurrent requests allowed.
+</Info>
+
+### Automatic Tier Detection
+
+The rate limiter automatically determines tier from model ID:
+
+```python
+# Free tier - has :free suffix
+"google/gemini-2.0-flash-001:free" → Free tier (8 RPM)
+
+# Native tier - starts with gemini- or no provider prefix
+"gemini-2.5-flash" → Native tier (58 RPM)
+"gemini-3-pro-image-preview" → Native tier (58 RPM)
+
+# Paid tier - has provider prefix, no :free suffix
+"anthropic/claude-3.5-sonnet" → Paid tier (45 RPM)
+"google/gemini-3-flash-preview" → Paid tier (45 RPM)
+```
+
+## Per-IP Rate Limiting (Middleware)
+
+In addition to per-model rate limiting, the demo sign-in endpoint has per-IP rate limiting:
+
+```bash
+Endpoint: POST /api/v1/auth/demo
+Limit: 10 requests per minute per IP
+Window: Sliding 60-second window
+```
+
+### 429 Response
+
+When you exceed the per-IP limit:
+
+```json
+{
+  "error": "Demo sign-in rate limit exceeded. Try again in 60 seconds."
+}
+```
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+```
+
+<Tip>
+The `Retry-After` header tells you exactly when to retry (in seconds).
+</Tip>
+
+## How Rate Limiting Works in Practice
+
+### Single Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Turing interrogation Wilmslow February 1952",
+    "preset": "hyper",
+    "generate_image": true
+  }'
+```
+
+**What happens:**
+1. System detects `preset: "hyper"` uses `google/gemini-2.0-flash-001` (Paid tier via OpenRouter)
+2. Rate limiter checks Paid tier token bucket (45 RPM, burst 5)
+3. Token available → Request proceeds immediately
+4. Token consumed → 4 tokens remaining for burst
+5. Tokens refill at 0.75/sec (~45/min sustained)
+
+### Burst Scenario
+
+You make 8 requests in quick succession:
+
+```
+Request 1: ✓ Token available (5 → 4)
+Request 2: ✓ Token available (4 → 3)
+Request 3: ✓ Token available (3 → 2)
+Request 4: ✓ Token available (2 → 1)
+Request 5: ✓ Token available (1 → 0)
+Request 6: ⏳ Wait ~1.3 seconds for refill
+Request 7: ⏳ Wait ~1.3 seconds for refill
+Request 8: ⏳ Wait ~1.3 seconds for refill
+```
+
+<Note>
+Bursts are allowed up to capacity, then requests are spaced at refill rate. This prevents provider 429 errors.
+</Note>
+
+### Free Tier Example
+
+Free models have stricter limits due to provider constraints:
+
+```bash
+# Using a free model
+curl -X POST http://localhost:8000/api/v1/timepoints/generate/stream \
+  -d '{
+    "text_model": "google/gemini-2.0-flash-001:free",
+    "query": "Apollo 11 July 1969"
+  }'
+```
+
+**Rate limiting:**
+- Burst: 2 requests
+- Sustained: 8 requests/minute (~7.5 seconds between requests)
+- Waiting: Requests beyond burst wait for token refill
+
+## Graceful Degradation
+
+The rate limiter includes safety mechanisms:
+
+### Consecutive Failure Tracking
+
+If the rate limiter fails 5 times consecutively:
+- Rate limiting is **automatically disabled**
+- All requests proceed without waiting
+- Error is logged for monitoring
+
+This prevents rate limiter bugs from blocking all requests.
+
+### Timeout Protection
+
+Rate limiter waits have a default 30-second timeout:
+
+```python
+await limiter.acquire(timeout=30.0)
+```
+
+If a token isn't available within timeout:
+- Request proceeds anyway (fail-open)
+- Warning is logged
+- Provider may return 429 (handled by fallback system)
+
+## Provider Fallback Chain
+
+When a provider returns 429 (rate limit exceeded), TIMEPOINT automatically falls back:
+
+### Text Generation Fallback
+
+```
+Primary: Google Native (gemini-2.5-flash)
+   ↓ [429 error]
+Fallback: OpenRouter (google/gemini-2.0-flash-001)
+   ↓ [429 error]
+Fail: Return error to client
+```
+
+### Image Generation Fallback
+
+```
+Primary: Google Imagen (gemini-2.5-flash-image)
+   ↓ [429 or quota exhausted]
+Fallback 1: OpenRouter Flux (via chat/completions)
+   ↓ [429 error]
+Fallback 2: Pollinations.ai (free, no limits)
+   ↓ [never fails]
+Success: Scene completes with image
+```
+
+<Tip>
+Pollinations.ai is the ultimate fallback with no rate limits. Scenes always complete, even under heavy load.
+</Tip>
+
+## Best Practices
+
+### For Developers
+
+<AccordionGroup>
+  <Accordion title="Choose the Right Preset">
+    - **Hyper**: Fast prototyping, can handle bursts
+    - **Balanced**: Production default, good throughput
+    - **HD**: High quality, slower, use for important scenes
+    - **Free models**: Lowest cost, strictest limits (8 RPM)
+  </Accordion>
+  
+  <Accordion title="Handle Wait Times Gracefully">
+    ```javascript
+    // Show loading indicator during rate limit wait
+    const response = await fetch('/api/v1/timepoints/generate/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: 'Apollo 11 moon landing',
+        preset: 'balanced'
+      })
+    });
+    
+    // Rate limiter may wait up to 30 seconds
+    // User sees progress events via SSE stream
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Streaming for Better UX">
+    - `/generate/stream` provides real-time progress
+    - User sees "Rate limiting..." if waiting for token
+    - Better than sync endpoints that appear frozen
+  </Accordion>
+  
+  <Accordion title="Implement Exponential Backoff for 429s">
+    ```javascript
+    async function generateWithRetry(query, maxRetries = 3) {
+      for (let i = 0; i < maxRetries; i++) {
+        const response = await fetch('/api/v1/timepoints/generate/sync', {
+          method: 'POST',
+          body: JSON.stringify({ query, preset: 'balanced' })
+        });
+        
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After') || 60;
+          await sleep(retryAfter * 1000 * Math.pow(2, i));
+          continue;
+        }
+        
+        return response;
+      }
+      throw new Error('Max retries exceeded');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Monitor Rate Limiter Stats">
+    ```bash
+    # Check current token availability (dev only)
+    curl http://localhost:8000/api/v1/status
+    ```
+    
+    Response includes rate limiter stats in debug mode.
+  </Accordion>
+</AccordionGroup>
+
+### For Production
+
+1. **Use Paid Tiers**: Free models (8 RPM) are too restrictive for production load
+2. **Load Balance**: Distribute requests across multiple API keys if needed
+3. **Queue Requests**: Use a job queue for async generation (e.g., BullMQ, Celery)
+4. **Monitor Quotas**: Track Google API quota usage (1,500 RPD per model)
+5. **Cache Results**: Cache completed timepoints to reduce regeneration
+
+## Rate Limit Headers (Future)
+
+Planned for future versions:
+
+```http
+X-RateLimit-Limit: 45
+X-RateLimit-Remaining: 12
+X-RateLimit-Reset: 1677649530
+X-RateLimit-Tier: paid
+```
+
+## Configuration
+
+Rate limits are configured in `app/core/rate_limiter.py`:
+
+```python
+TIER_RATE_LIMITS = {
+    "free": {
+        "rpm": 8,          # Requests per minute
+        "burst": 2,        # Burst capacity
+        "refill_rate": 0.13,  # Tokens per second
+    },
+    "paid": {
+        "rpm": 45,
+        "burst": 5,
+        "refill_rate": 0.75,
+    },
+    "native": {
+        "rpm": 58,         # Leave headroom from 60
+        "burst": 8,
+        "refill_rate": 0.97,
+    },
+}
+```
+
+<Warning>
+Do not modify rate limits without testing. Provider limits are hard caps that cause 429 errors if exceeded.
+</Warning>
+
+## Debugging Rate Limits
+
+### Enable Debug Logging
+
+```bash
+export LOG_LEVEL=DEBUG
+uvicorn app.main:app --reload
+```
+
+You'll see logs like:
+
+```
+DEBUG - Rate limit: waiting 1.33s for token (tokens=0.00, rate=0.750/s)
+DEBUG - Rate limiter disabled, allowing request through
+DEBUG - Rate limiter error (allowing request): ...
+```
+
+### Check Token Availability
+
+```python
+from app.core.rate_limiter import get_registry
+
+registry = await get_registry()
+stats = registry.get_stats()
+
+print(stats)
+# {
+#   'free': {'available_tokens': 2.0, 'capacity': 2, 'refill_rate': 0.13},
+#   'paid': {'available_tokens': 3.7, 'capacity': 5, 'refill_rate': 0.75},
+#   'native': {'available_tokens': 8.0, 'capacity': 8, 'refill_rate': 0.97}
+# }
+```
+
+## Error Responses
+
+### 429 Too Many Requests
+
+```json
+{
+  "error": "Rate limit exceeded. Try again in 45 seconds."
+}
+```
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 45
+```
+
+<Tip>
+If you see 429 errors, it means the internal rate limiter was bypassed or misconfigured. Report this as a bug.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Generation Endpoints" icon="wand-magic-sparkles" href="/api/endpoints/generation">
+    Start generating historical scenes
+  </Card>
+  <Card title="Provider Resilience" icon="shield" href="/architecture/providers">
+    Learn about dual-provider failover
+  </Card>
+</CardGroup>
